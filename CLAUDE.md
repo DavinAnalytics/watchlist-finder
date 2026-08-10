@@ -244,6 +244,13 @@ runtime limit was its only reason to exist. Runtime still shows per title.
 A `--kid-awake` equivalent (G/PG via the release-dates endpoint, runtime under
 40m) is planned but not needed until 2027. Don't build it yet.
 
+**The rendered page is no longer fully self-contained.** The reskin's fonts
+load from `fonts.googleapis.com`, and posters hotlink `image.tmdb.org` — new
+client-side network dependencies for a page whose whole point is reading it on
+a phone that might not have a strong connection. Both degrade gracefully
+(system font, missing image), so this isn't a functional break, just a
+tradeoff to know about if the page ever looks plain or image-less on bad wifi.
+
 ## Reliability
 
 - Write output to a temp file, then `os.replace()` into place. Never leave a
