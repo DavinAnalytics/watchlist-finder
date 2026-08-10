@@ -223,9 +223,27 @@ JS constraint, that whole component looked disallowed. Under the rule as
 clarified since, it isn't: the dialog's content (title, year, runtime,
 services) is all data render.py already computes and would already be sitting
 in the page's HTML, hidden; opening it needs only a visibility toggle, no
-recomputation. A native `<details>` (as the "not currently streaming" sections
-already use) or a checkbox/`:target` CSS toggle could do this with no script
-at all. Still unbuilt, but no longer ruled out — pick it up if wanted.
+recomputation. Built 2026-08-10, the same day as the clarification: a CSS
+`:target` toggle in `render.py`'s `render_dialogs()`. Tapping a row (every
+row, streaming or hidden) opens a bottom sheet with a larger poster, the full
+service list or a "not currently streaming" tag, and a plain outbound link to
+the title's TMDB page (built from the id alone — no new fetch, no new schema).
+
+Two accepted tradeoffs of doing this with no JavaScript, worth knowing rather
+than rediscovering:
+
+- Both opening and closing are ordinary anchor navigations, so each pushes a
+  browser-history entry. A few titles opened and closed in one session means
+  a few back-taps to actually leave the page. The close links point at
+  `#_close`, a fragment matching no element, specifically so closing doesn't
+  also scroll the page back to the top — a bare `#` would, per the
+  fragment-navigation spec, and that's a real bug this shipped with and fixed
+  before it went out.
+- The dialog carries `role="dialog" aria-modal="true"` but nothing moves
+  keyboard/screen-reader focus into it on open — CSS can't do that. This
+  asserts slightly more than a no-JS implementation can deliver. Accepted as
+  a known gap, not silently ignored: fixing it for real needs the very
+  JavaScript this project is built to avoid.
 
 Each streaming title's card shows a real TMDB poster (`/t/p/w92{poster_path}`,
 hotlinked from TMDB's own CDN, no image is stored or proxied) or a decorative

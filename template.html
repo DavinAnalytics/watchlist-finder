@@ -26,7 +26,10 @@
     --poster-a: #332b22;
     --poster-b: #241e18;
     --poster-label: #b6ab98;
+    --neutral-tag-bg: color-mix(in srgb, var(--text) 12%, transparent);
+    --backdrop: color-mix(in srgb, black 55%, transparent);
     --shadow-sm: none;
+    --shadow-lg: none;
     --elev-border: 1px solid var(--divider);
     --font-heading: "Caprasimo", system-ui, sans-serif;
     --font-body: "Figtree", system-ui, sans-serif;
@@ -46,6 +49,7 @@
       --poster-b: #dcd3c4;
       --poster-label: #82796a;
       --shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+      --shadow-lg: 0 12px 32px color-mix(in srgb, #2e2b25 22%, transparent);
       --elev-border: none;
     }
   }
@@ -88,13 +92,18 @@
     color: var(--dim); margin: 2rem 0 .7rem;
   }
 
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   ul { list-style: none; margin: 0; padding: 0; }
-  li.row-card {
+  li { margin-bottom: .5rem; }
+  .row-card {
     display: flex; align-items: center; gap: .75rem;
     background: var(--surface); border: var(--elev-border); box-shadow: var(--shadow-sm);
-    border-radius: var(--radius-card); padding: .6rem .7rem; margin-bottom: .5rem;
+    border-radius: var(--radius-card); padding: .6rem .7rem;
+    text-decoration: none; color: inherit; -webkit-tap-highlight-color: transparent;
   }
-  li.row-card-off {
+  .row-card:active { opacity: .85; }
+  .row-card-off {
     box-shadow: none; border: 1px solid var(--divider);
     padding: .55rem .75rem; opacity: .62;
   }
@@ -125,6 +134,7 @@
     width: 6px; height: 6px; border-radius: 50%; background: var(--tag-color);
     display: inline-block; margin-right: .35rem;
   }
+  .tag-neutral { background: var(--neutral-tag-bg); color: var(--dim); }
 
   .empty { color: var(--dim); font-size: .9rem; padding: .2rem 0 .4rem; }
 
@@ -139,6 +149,38 @@
   .hidden-list summary:hover { color: var(--text); }
 
   footer { color: var(--dim); font-size: .75rem; margin-top: 3rem; text-align: center; }
+
+  /* Detail dialogs: pure CSS, driven by :target. Tapping a row navigates to
+     #m{id}; tapping the backdrop, the close button, or the browser's back
+     gesture navigates away from it. No JavaScript, nothing recomputed —
+     every field here is HTML render.py already wrote to the page. */
+  .dialog-target { display: none; }
+  .dialog-target:target {
+    display: block; position: fixed; inset: 0; z-index: 50;
+  }
+  .dialog-backdrop {
+    position: absolute; inset: 0; background: var(--backdrop);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dialog {
+    position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto;
+    width: 100%; max-width: 27.5rem;
+    display: flex; flex-direction: column; gap: .85rem;
+    padding: 1.4rem 1.2rem 1.6rem; border-radius: 1.75rem 1.75rem 0 0;
+    background: var(--surface); box-shadow: var(--shadow-lg); border: var(--elev-border);
+  }
+  .dialog-close {
+    position: absolute; top: .7rem; right: .7rem; width: 2.1rem; height: 2.1rem;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text); text-decoration: none; font-size: .85rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dialog-head { display: flex; gap: 1rem; }
+  .dialog-poster { width: 5.25rem; height: 7.875rem; border-radius: .8rem; }
+  .dialog-title { font-family: var(--font-heading); font-weight: 400; font-size: 1.25rem; }
+  .dialog-body { font-size: .85rem; color: var(--dim); margin: 0; }
+  .dialog-body a { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -165,5 +207,6 @@
 
   <footer>$footer</footer>
 </main>
+$dialogs
 </body>
 </html>

@@ -6,8 +6,11 @@ template.html, and atomically replaces docs/index.html.
 
 Two rules this file exists to honour:
 
-* Zero JavaScript in the output. Every sort, group and filter happens here, in
-  Python. The page that lands in docs/ is HTML and CSS.
+* No client-side logic that duplicates what this file already computes. Every
+  sort, group, filter and diff happens here, in Python, once, at generation
+  time. The per-title detail dialogs are pure presentation — a CSS :target
+  toggle revealing HTML this file already rendered, nothing recomputed in the
+  browser — which is why they don't cost the project its zero-JS posture.
 * Nothing counts as "streaming" unless it is on one of the subscribed services,
   or free with ads on YouTube. Every read of the availability table goes
   through common.subscription_for() and common.free_tier_for(), which is what
@@ -91,6 +94,30 @@ def esc(text):
 
 
 POSTER_SIZE = "w92"  # TMDB's smallest useful width; this is a phone-width list, not a gallery
+DIALOG_POSTER_SIZE = "w154"
+
+
+def poster_html(poster_path, *, css_class="poster", size=POSTER_SIZE, width=52, height=78):
+    if poster_path:
+        src = f"https://image.tmdb.org/t/p/{size}{poster_path}"
+        return (
+            f'<img class="{css_class}" src="{esc(src)}" alt="" '
+            f'loading="lazy" width="{width}" height="{height}">'
+        )
+    return f'<div class="{css_class} poster-placeholder" aria-hidden="true">poster</div>'
+
+
+def tag_chips(services):
+    if not services:
+        return '<span class="tag tag-neutral">Not currently streaming</span>'
+    chips = []
+    for s in services:
+        color = common.SERVICE_COLORS.get(s, common.TAG_FALLBACK)
+        chips.append(
+            f'<span class="tag" style="--tag-color:{esc(color)}">'
+            f'<span class="tag-dot"></span>{esc(s)}</span>'
+        )
+    return "".join(chips)
 
 
 def render_list(items, movies, empty_text, *, variant="on"):
@@ -100,6 +127,10 @@ def render_list(items, movies, empty_text, *, variant="on"):
     placeholder if not), colored service tags — for titles actually streaming.
     variant="off": flat card, dimmed, title/meta only — for the collapsed
     "not currently streaming" lists, deliberately less visually loud.
+
+    Every row is a link to #m{tmdb_id}, opening that title's detail dialog —
+    see render_dialogs(). Pure navigation to an anchor already in the page;
+    nothing here executes in the browser.
     """
     if not items:
         return f'<p class="empty">{esc(empty_text)}</p>'
@@ -122,34 +153,74 @@ def render_list(items, movies, empty_text, *, variant="on"):
             meta.append(f"{esc(runtime)} min")
         meta_html = f'<div class="card-meta">{" · ".join(meta)}</div>' if meta else ""
 
-        poster_html = ""
-        if on:
-            if poster_path:
-                src = f"https://image.tmdb.org/t/p/{POSTER_SIZE}{poster_path}"
-                poster_html = (
-                    f'<img class="poster" src="{esc(src)}" alt="" '
-                    f'loading="lazy" width="52" height="78">'
-                )
-            else:
-                poster_html = '<div class="poster poster-placeholder" aria-hidden="true">poster</div>'
+        poster = poster_html(poster_path) if on else ""
 
         tags_html = ""
         if on and services:
-            chips = []
-            for s in services:
-                color = common.SERVICE_COLORS.get(s, common.TAG_FALLBACK)
-                chips.append(
-                    f'<span class="tag" style="--tag-color:{esc(color)}">'
-                    f'<span class="tag-dot"></span>{esc(s)}</span>'
-                )
-            tags_html = f'<div class="tag-row">{"".join(chips)}</div>'
+            tags_html = f'<div class="tag-row">{tag_chips(services)}</div>'
 
         out.append(
-            f'<li class="{card_class}">{poster_html}'
+            f'<li><a class="{card_class}" href="#m{tmdb_id}">{poster}'
             f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
-            f"{meta_html}{tags_html}</div></li>"
+            f"{meta_html}{tags_html}</div></a></li>"
         )
     out.append("</ul>")
+    return "\n".join(out)
+
+
+def render_dialogs(items, movies):
+    """One collapsed detail overlay per unique tmdb_id, revealed by CSS
+    :target when its row is tapped. `items`: {tmdb_id: [services]}, already
+    deduped by the caller — dict keys can't collide by construction, so a
+    broken disjointness assumption there wouldn't produce invalid HTML; it
+    would silently show the wrong services in a dialog (whichever source
+    group was merged last wins for that id), which is quieter and worse.
+    That disjointness isn't local to this file: it depends on poll_log
+    having one row per movie per day shared across both lists (see
+    sync_providers.resolved_ids()), which is what makes "not in today"
+    actually mean "not a watchlist member" rather than just "wasn't polled".
+    Touching poll_log's schema or how ids are polled should come back here.
+
+    The close links point at "#_close" rather than a bare "#": per the
+    fragment-navigation spec, an empty fragment means "scroll to top of
+    document", which would yank a long page back up every time a dialog
+    closes. A fragment matching no element id clears :target with no scroll.
+    """
+    if not items:
+        return ""
+
+    out = []
+    for tmdb_id, services in sorted(items.items()):
+        movie = movies.get(tmdb_id)
+        title = movie["title"] if movie else f"tmdb:{tmdb_id}"
+        year = movie["year"] if movie else None
+        runtime = movie["runtime"] if movie else None
+        poster_path = movie["poster_path"] if movie else None
+
+        meta = " · ".join(esc(v) for v in (year, f"{runtime} min" if runtime else None) if v)
+        poster = poster_html(
+            poster_path,
+            css_class="poster dialog-poster",
+            size=DIALOG_POSTER_SIZE,
+            width=84,
+            height=126,
+        )
+        tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}"
+
+        out.append(
+            f'<div id="m{tmdb_id}" class="dialog-target">'
+            f'<a href="#_close" class="dialog-backdrop" tabindex="-1" aria-hidden="true"></a>'
+            f'<div class="dialog elev-lg" role="dialog" aria-modal="true" '
+            f'aria-labelledby="m{tmdb_id}-title">'
+            f'<a href="#_close" class="dialog-close" aria-label="Close">✕</a>'
+            f'<div class="dialog-head">{poster}'
+            f'<div><div id="m{tmdb_id}-title" class="dialog-title">{esc(title)}</div>'
+            f'<div class="card-meta">{meta}</div></div></div>'
+            f'<div class="tag-row">{tag_chips(services)}</div>'
+            f'<p class="dialog-body">More detail, cast, and every rental or purchase price: '
+            f'<a href="{esc(tmdb_url)}">{esc(title)} on TMDB</a>.</p>'
+            f"</div></div>"
+        )
     return "\n".join(out)
 
 
@@ -245,6 +316,15 @@ def main(argv=None):
             for i in members(conn, "favorites") - set(fav_streaming) - members(conn, "watchlist")
         }
 
+        # Every id shown anywhere on the page needs a dialog. The four sets
+        # are pairwise disjoint by construction (fav_streaming excludes
+        # watchlist ids, *_hidden excludes their *_streaming counterpart), so
+        # a plain merge is safe — see render_dialogs()'s own note for the
+        # defensive case where that construction ever changes.
+        dialog_items = {}
+        for group in (streaming, watch_hidden, fav_streaming, fav_hidden):
+            dialog_items.update(group)
+
         key = sort_key(movies)
         prev_label = prev or "the last run"
         banners = []
@@ -301,6 +381,7 @@ def main(argv=None):
             footer=esc(
                 f"{len(today)} of {watchlist_size} watchlist titles polled on {latest}"
             ),
+            dialogs=render_dialogs(dialog_items, movies),
         )
     finally:
         conn.close()
