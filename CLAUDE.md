@@ -35,10 +35,18 @@ watchlist/
 │   └── movies.db          # SQLite (gitignored, regenerable)
 ├── docs/
 │   └── index.html         # generated; served by GitHub Pages
-├── sync.py
+├── common.py              # paths, .env, TMDB client, schema, atomic write
+├── resolver.py            # step 1: text -> tmdb ids
+├── sync_providers.py      # step 2: availability
+├── render.py              # step 3: the page
+├── sync.py                # runs 1-3 in order, then commits and pushes
 ├── template.html
+├── watchlist.log          # every run, timestamped (gitignored)
 └── .env                   # TMDB_API_KEY (gitignored)
 ```
+
+Stdlib only. No requirements.txt, nothing to install, nothing to keep current —
+a 4am job that depends on a virtualenv is a 4am job that breaks silently.
 
 GitHub Pages serves from `/docs` on main.
 
@@ -71,15 +79,25 @@ movies(tmdb_id PK, title, year, runtime)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
+poll_log(tmdb_id FK, polled_on DATE)
 ```
 
-`favorites` and `watchlist` are separate tables sharing `movies`. Favorites are
-never filtered by streaming availability — they exist as a dedupe check and as
-something to paste into a chat when looking for recommendations.
+`favorites` and `watchlist` are separate tables sharing `movies`.
 
 `availability` gets one row per movie/provider/day. This history is the entire
 reason the "new since yesterday" and "gone" sections can exist. Never overwrite
 it; only append.
+
+`poll_log` records which ids were *successfully* polled on a given day. Without
+it, a movie whose provider fetch failed has no availability rows for today,
+which is indistinguishable from a movie that genuinely left every service — and
+the diff invents a departure on every network hiccup. Anything absent from
+`poll_log` for a date is unknown for that date, not gone.
+
+Membership in `favorites` and `watchlist` is decided by the text files and only
+by the text files. Never let the success of an API call decide whether a row
+survives: a transient failure would silently delete a title that is still
+listed. Titles are removed by deleting the line, and by nothing else.
 
 ## Resolution rules
 
@@ -107,11 +125,21 @@ deleting that one entry from the cache, deliberately, by hand.
 - Key the cache on the raw input string, but `.strip()` before hashing. Several
   entries have trailing whitespace and would otherwise cache twice.
 - If the top TMDB result's title doesn't fuzzy-match the input above a
-  threshold, write to `unresolved.txt` and skip. Don't guess.
-- Titles that won't resolve cleanly on first run include shorthand (`EEAAO`,
-  `Django`, `Martian`, `Imitation game`, `Brawl in cell block`), missing
-  punctuation (`Dont breathe`, `Tick tick boom`), and genuinely ambiguous ones
-  (`Jungle`). These get fixed once, by hand, in the cache.
+  threshold, write to `unresolved.txt` and skip. Don't guess. Only the top
+  result is considered: a second-guess pulled from further down the result list
+  is exactly the silent wrong answer this is meant to avoid.
+- Also reject on year: if the top result's release year disagrees with the year
+  the entry is listed under, refuse it. Don't trust TMDB's `year` search
+  parameter to be a hard filter. This is what caught `Blade Runner` under 2017
+  returning the 1982 film.
+- Normalization before fuzzy matching (casefold, strip accents/punctuation, drop
+  a leading article, and compare with spaces removed too) resolves most of the
+  sloppy entries on its own — `Wolf of wallstreet`, `Imitation game`,
+  `Dont breathe`, `Tick tick boom`, `Brawl in cell block` all match. What
+  genuinely needs a human is shorthand (`EEAAO`, `Django`, `Mad Max`), missing
+  spaces that defeat TMDB's own search (`Wolf of wallstreet`, `22 jumpstreet`
+  return nothing at all), misspellings (`Cacher` → *Caché*), and real ambiguity
+  (`Blade Runner`, `Jungle`). 12 of the first 59 needed pinning.
 - `Mother!` — the exclamation mark is part of the title. Keep it.
 - Unreleased films (2026 entries) may have no TMDB record. Log and skip; don't
   raise.
@@ -122,14 +150,36 @@ deleting that one entry from the cache, deliberately, by hand.
 Use `/movie/{id}/watch/providers`, US region, `flatrate` for subscription.
 Subscribed services: Netflix, Hulu, Peacock, Prime Video, Paramount+.
 
+Store *every* US flatrate provider, not just the subscribed five, and filter at
+render time through `common.subscription_for()`. Changing which services are
+subscribed to then costs nothing and needs no re-fetch. The corollary is a rule:
+every read of `availability` goes through `subscription_for()`. TMDB ships
+variants ("Netflix Standard with Ads", "Paramount Plus Essential") that must
+match, and reseller add-ons ("Paramount+ Amazon Channel", "Starz Apple TV
+Channel") that must not — they are separate paid subscriptions, not the service.
+
 TMDB does not expose expiration dates. "Leaving soon" is not implementable and
 shouldn't be attempted. Daily diffing catches departures the day after they
 happen, which is the accepted tradeoff.
 
 ## Page sections
 
-In order: summary counts (streaming / new / gone), new since yesterday, under
-100 minutes, everything currently streaming.
+In order: summary counts (streaming / new / gone), new since yesterday,
+everything currently streaming, favorites currently streaming.
+
+The counts and the first two sections are watchlist-only. The favorites section
+is additive, is deduped against the watchlist so nothing renders twice, and is
+the one place availability touches favorites — they are still never *filtered*
+by it, and the list stays complete elsewhere as a dedupe check and as something
+to paste into a chat when looking for recommendations.
+
+"New since yesterday" diffs against the previous poll date, not literally
+yesterday. If the Mac slept for two days, yesterday holds no rows and every
+title would look new. Only ids present in both polls are compared; an id missing
+from either is unknown, not changed.
+
+There was an "under 100 minutes" section. It was removed on 2026-08-09 — the
+runtime limit was its only reason to exist. Runtime still shows per title.
 
 A `--kid-awake` equivalent (G/PG via the release-dates endpoint, runtime under
 40m) is planned but not needed until 2027. Don't build it yet.
@@ -142,6 +192,21 @@ A `--kid-awake` equivalent (G/PG via the release-dates endpoint, runtime under
   shows stale data forever is the failure mode to design against.
 - Read all paths from `.env` or `Path.home()`. Never hardcode `/Users/<name>/`
   — this is a public repo.
+- **One fault is one fault, not N.** Five consecutive API failures aborts the
+  run (`common.CONSECUTIVE_FAILURE_LIMIT`). A missing CA bundle once turned one
+  dead connection into 59 per-title failures that took seven minutes and still
+  exited 0, with every title filed under "needs a human".
+- **A systemic failure must not wear a per-title costume.** A 401/403 raises
+  `TMDBAuthError` and aborts rather than being caught by per-title handling.
+- **Full-rewrite files must not be written from a partial pass.** `unresolved.txt`
+  is rewritten wholesale each run, so an aborted run leaves the previous file
+  alone and logs that it is stale. Writing it early would delete every title the
+  run never reached and leave a worklist that looks nearly clean.
+- **Say so on the page when the data is thin.** The page carries a banner when
+  the latest poll isn't today, and when either list was polled below
+  `MIN_POLL_COVERAGE`. A sparse page that looks authoritative is the enemy.
+- A corrupt `resolved.json` crashes the run. It never resets, and never quietly
+  drops the affected title.
 
 ## Git
 
@@ -159,16 +224,25 @@ files and `resolved.json` are the real data and should be versioned.
 If the TMDB key ever lands in a commit, don't rewrite history — revoke it in the
 TMDB dashboard and issue a new one.
 
-`sync.py` ends with add/commit/push to `docs/`. That's the only network write.
+`sync.py` ends with add/commit/push. That's the only network write. It commits
+named files, never a directory — `docs/index.html`, `data/resolved.json`,
+`data/unresolved.txt`. `git add docs` would stage anything that ever lands in
+`docs/` and push it to a public repo. `resolved.json` rides along because it
+carries every hand-pinned id and GitHub is the backup; committing only the page
+would leave the repo permanently dirty and the hand-fixes unbacked-up.
+
+Source changes are a separate, ordinary commit. `sync.py` does not commit code.
 
 ## Build order
 
-1. Resolver — parse both text files, hit TMDB search with year, populate
-   `resolved.json` and `unresolved.txt`. Run it, hand-fix the outliers.
-2. Provider sync — fetch availability, append to `availability`.
-3. Renderer — query, diff against yesterday, fill `template.html`, atomic write
-   to `docs/index.html`.
-4. launchd plist — only after the script runs clean by hand.
+1. ~~Resolver~~ — done. `resolver.py`.
+2. ~~Provider sync~~ — done. `sync_providers.py`.
+3. ~~Renderer~~ — done. `render.py`, plus `sync.py` to chain and publish.
+4. launchd plist — **still to build.** The precondition (runs clean by hand) is
+   met: the full chain has run clean end to end, including the push.
+
+Built and live 2026-08-09: 67 titles resolved, 0 unresolved, publishing to
+GitHub Pages.
 
 ## launchd
 
