@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Watchlist</title>
+<style>
+  :root {
+    --bg: #12110f;
+    --card: #1b1917;
+    --line: #2e2b27;
+    --text: #ece7df;
+    --dim: #97918a;
+    --accent: #e0b872;
+    --gone: #b8736a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #faf7f2; --card: #fff; --line: #e5ded2;
+      --text: #22201d; --dim: #6d675f; --accent: #8a6414; --gone: #9c463a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.25rem 1rem 4rem;
+    background: var(--bg); color: var(--text);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .15rem; letter-spacing: -.01em; }
+  .stamp { color: var(--dim); font-size: .8rem; margin: 0 0 1.25rem; }
+  .stale {
+    background: var(--gone); color: #fff; padding: .6rem .8rem;
+    border-radius: .5rem; font-size: .85rem; margin: 0 0 1rem;
+  }
+  .counts { display: flex; gap: .5rem; margin: 0 0 1.75rem; }
+  .counts div {
+    flex: 1; background: var(--card); border: 1px solid var(--line);
+    border-radius: .6rem; padding: .7rem .5rem; text-align: center;
+  }
+  .counts b { display: block; font-size: 1.5rem; font-weight: 600; line-height: 1.1; }
+  .counts span { color: var(--dim); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+  h2 {
+    font-size: .78rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--dim); font-weight: 600; margin: 2rem 0 .6rem;
+  }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: .6rem; padding: .65rem .8rem; margin-bottom: .4rem;
+  }
+  .title { font-weight: 600; }
+  .meta { color: var(--dim); font-size: .82rem; margin-top: .1rem; }
+  .meta .on { color: var(--accent); }
+  .empty { color: var(--dim); font-size: .9rem; padding: .2rem 0 .4rem; }
+  footer { color: var(--dim); font-size: .75rem; margin-top: 3rem; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Watchlist</h1>
+  <p class="stamp">Sun 9 Aug, 20:31 · data from 2026-08-09</p>
+  
+  <div class="counts">
+    <div><b>2</b><span>streaming</span></div>
+    <div><b>0</b><span>new</span></div>
+    <div><b>0</b><span>gone</span></div>
+  </div>
+
+  <h2>New since the last run</h2>
+  <p class="empty">Nothing new since the last run.</p>
+
+  <h2>Under 100 minutes</h2>
+  <p class="empty">Nothing streaming under 100 minutes.</p>
+
+  <h2>Everything streaming</h2>
+  <ul>
+<li><div class="title">Calibre</div><div class="meta">2018 · 101 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Sleep Tight</div><div class="meta">2011 · 101 min · <span class="on">Prime Video</span></div></li>
+</ul>
+
+  <h2>Favorites streaming · rewatch</h2>
+  <ul>
+<li><div class="title">A Quiet Place</div><div class="meta">2018 · 91 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">Arrival</div><div class="meta">2016 · 116 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">Baby Driver</div><div class="meta">2017 · 113 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">Blade Runner 2049</div><div class="meta">2017 · 164 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">Brawl in Cell Block 99</div><div class="meta">2017 · 132 min · <span class="on">Hulu</span></div></li>
+<li><div class="title">Bullet Train</div><div class="meta">2022 · 126 min · <span class="on">Hulu</span></div></li>
+<li><div class="title">Don&#x27;t Breathe</div><div class="meta">2016 · 89 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Enemy</div><div class="meta">2014 · 91 min · <span class="on">Prime Video</span></div></li>
+<li><div class="title">Everything Everywhere All at Once</div><div class="meta">2022 · 140 min · <span class="on">Hulu</span></div></li>
+<li><div class="title">Interstellar</div><div class="meta">2014 · 169 min · <span class="on">Hulu, Paramount+, Prime Video</span></div></li>
+<li><div class="title">Jungle</div><div class="meta">2017 · 115 min · <span class="on">Prime Video</span></div></li>
+<li><div class="title">Night in Paradise</div><div class="meta">2020 · 131 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Nightcrawler</div><div class="meta">2014 · 118 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">No Other Choice</div><div class="meta">2025 · 139 min · <span class="on">Hulu</span></div></li>
+<li><div class="title">Nobody</div><div class="meta">2021 · 91 min · <span class="on">Peacock</span></div></li>
+<li><div class="title">Obsession</div><div class="meta">2026 · 109 min · <span class="on">Peacock</span></div></li>
+<li><div class="title">Overlord</div><div class="meta">2018 · 110 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">Palm Springs</div><div class="meta">2020 · 90 min · <span class="on">Hulu</span></div></li>
+<li><div class="title">Poor Things</div><div class="meta">2023 · 141 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Saltburn</div><div class="meta">2023 · 131 min · <span class="on">Hulu, Prime Video</span></div></li>
+<li><div class="title">Super Dark Times</div><div class="meta">2017 · 103 min · <span class="on">Prime Video</span></div></li>
+<li><div class="title">The Autopsy of Jane Doe</div><div class="meta">2016 · 86 min · <span class="on">Paramount+</span></div></li>
+<li><div class="title">The Martian</div><div class="meta">2015 · 141 min · <span class="on">Prime Video</span></div></li>
+<li><div class="title">The Rip</div><div class="meta">2026 · 113 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">The Wolf of Wall Street</div><div class="meta">2013 · 180 min · <span class="on">Hulu, Paramount+, Prime Video</span></div></li>
+<li><div class="title">tick, tick... BOOM!</div><div class="meta">2021 · 120 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Time to Hunt</div><div class="meta">2020 · 135 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">Triple Frontier</div><div class="meta">2019 · 125 min · <span class="on">Netflix</span></div></li>
+<li><div class="title">World War Z</div><div class="meta">2013 · 116 min · <span class="on">Paramount+, Prime Video</span></div></li>
+</ul>
+
+  <footer>6 of 6 watchlist titles polled on 2026-08-09</footer>
+</main>
+</body>
+</html>
