@@ -82,6 +82,7 @@ def main(argv=None):
 
         polled = 0
         failed = 0
+        consecutive_failures = 0
         rows = 0
         streaming = 0
 
@@ -97,7 +98,17 @@ def main(argv=None):
                 # tomorrow as a departure that never happened.
                 logger.error("provider fetch failed for id %s: %s", tmdb_id, exc)
                 failed += 1
+                consecutive_failures += 1
+                if consecutive_failures >= common.CONSECUTIVE_FAILURE_LIMIT:
+                    msg = (
+                        f"aborting run: {consecutive_failures} provider fetches "
+                        f"in a row failed ({exc}). Stopping before a broken "
+                        "connection gets written down as a day with no availability."
+                    )
+                    logger.error(msg)  # the log is the run record, not just stderr
+                    raise SystemExit(msg)
                 continue
+            consecutive_failures = 0
 
             # One transaction per movie, so a crash mid-run leaves the ids
             # already polled recorded and consistent with their poll_log entry.

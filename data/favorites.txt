@@ -18,7 +18,6 @@ Prometheus
 Wolf of wallstreet
 World War Z
 Her
-Enemy
 
 2014
 Whiplash
@@ -27,6 +26,7 @@ Imitation game
 22 jumpstreet
 Fury
 Nightcrawler
+Enemy
 
 2015
 Mad Max
@@ -53,10 +53,10 @@ Jungle
 A quiet place
 Annihilation
 Burning
+Overlord
 
 
 2019
-Overlord
 Parasite
 Midsommar
 Knives out
@@ -69,10 +69,10 @@ The art of self defense
 Time to hunt
 Palm Springs 
 Tenet
+Night in paradise
 
 2021
 Nobody
-Night in paradise 
 Tick tick boom
 
 2022
@@ -89,8 +89,8 @@ Dune part 2
 Love lies bleeding
 
 2025
+No other choice
 
 2026
-No other choice
 The rip
 Obsession

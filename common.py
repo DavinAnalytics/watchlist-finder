@@ -21,6 +21,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 TMDB_BASE = "https://api.themoviedb.org/3"
+
+# Consecutive failed API calls before a run gives up. One dead network (or a
+# missing CA bundle) is a single fault, not N per-title faults: without this a
+# script retries every title with backoff, takes minutes, and still exits 0
+# having filed the whole list under "needs a human".
+CONSECUTIVE_FAILURE_LIMIT = 5
 HTTP_TIMEOUT = 15
 USER_AGENT = "watchlist/1.0 (personal, local)"
 

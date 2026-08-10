@@ -46,16 +46,22 @@ def poll_dates(conn, on=None):
     return latest, prev
 
 
-def snapshot(conn, on):
-    """-> {tmdb_id: sorted[subscribed service]} for watchlist movies polled on `on`.
+LIST_TABLES = ("watchlist", "favorites")  # the only names allowed into a query
+
+
+def snapshot(conn, on, table="watchlist"):
+    """-> {tmdb_id: sorted[subscribed service]} for movies on `table` polled on `on`.
 
     Only ids with a poll_log row are included, so a movie whose fetch failed is
     absent rather than being reported as available nowhere.
     """
+    if table not in LIST_TABLES:
+        raise ValueError(f"unknown list table {table!r}")
+
     rows = conn.execute(
         "SELECT p.tmdb_id AS tmdb_id, a.provider AS provider "
         "FROM poll_log p "
-        "JOIN watchlist w ON w.tmdb_id = p.tmdb_id "
+        f"JOIN {table} l ON l.tmdb_id = p.tmdb_id "  # noqa: S608 - whitelisted above
         "LEFT JOIN availability a "
         "  ON a.tmdb_id = p.tmdb_id AND a.seen_on = p.polled_on AND a.kind = 'flatrate' "
         "WHERE p.polled_on = ?",
@@ -145,6 +151,7 @@ def main(argv=None):
 
         movies = movie_rows(conn)
         watchlist_size = conn.execute("SELECT COUNT(*) AS n FROM watchlist").fetchone()["n"]
+        favorites_size = conn.execute("SELECT COUNT(*) AS n FROM favorites").fetchone()["n"]
         today = snapshot(conn, latest)
         yesterday = snapshot(conn, prev) if prev else {}
 
@@ -163,6 +170,15 @@ def main(argv=None):
             if movies.get(i) and movies[i]["runtime"] and movies[i]["runtime"] < SHORT_RUNTIME
         }
 
+        # Deliberate, explicitly authorised departure from CLAUDE.md's
+        # "favorites are never filtered by streaming availability" rule: the
+        # owner asked for a favorites-streaming section on 2026-08-09. It is
+        # additive only — the counts and the three sections above stay
+        # watchlist-only, and anything already on the watchlist is excluded
+        # here so it can't appear twice on the page.
+        fav_today = snapshot(conn, latest, "favorites")
+        fav_streaming = {i: s for i, s in fav_today.items() if s and i not in today}
+
         key = sort_key(movies)
         prev_label = prev or "the last run"
         banners = []
@@ -173,12 +189,18 @@ def main(argv=None):
         # A sync where most fetches failed still dates its poll_log rows today,
         # so the staleness check above won't catch it. Without this the page
         # just looks emptier than it should, which is the quiet kind of wrong.
-        if watchlist_size and len(today) < watchlist_size * MIN_POLL_COVERAGE:
-            banners.append(
-                f"Incomplete: only {len(today)} of {watchlist_size} titles "
-                f"were polled on {esc(latest)}."
-            )
-            logger.warning("only %d of %d watchlist titles polled", len(today), watchlist_size)
+        # Both lists are checked: a sparse favorites section is just as
+        # misleading as a sparse watchlist one.
+        for label, polled, total in (
+            ("watchlist", len(today), watchlist_size),
+            ("favorites", len(fav_today), favorites_size),
+        ):
+            if total and polled < total * MIN_POLL_COVERAGE:
+                banners.append(
+                    f"Incomplete: only {polled} of {total} {label} titles "
+                    f"were polled on {esc(latest)}."
+                )
+                logger.warning("only %d of %d %s titles polled", polled, total, label)
 
         banner = "\n  ".join(f'<p class="stale">{b}</p>' for b in banners)
 
@@ -202,6 +224,11 @@ def main(argv=None):
                 movies,
                 "Nothing on the watchlist is streaming right now.",
             ),
+            section_favorites=render_list(
+                sorted(fav_streaming.items(), key=key),
+                movies,
+                "None of your favorites are streaming right now.",
+            ),
             footer=esc(
                 f"{len(today)} of {watchlist_size} watchlist titles polled on {latest}"
             ),
@@ -218,8 +245,10 @@ def main(argv=None):
 
     elapsed = (dt.datetime.now() - started).total_seconds()
     logger.info(
-        "run complete in %.1fs: wrote %s — %d streaming, %d new, %d gone (%s vs %s)",
-        elapsed, out_path, len(streaming), len(new), len(gone), latest, prev,
+        "run complete in %.1fs: wrote %s — %d streaming, %d new, %d gone, "
+        "%d favorites streaming (%s vs %s)",
+        elapsed, out_path, len(streaming), len(new), len(gone), len(fav_streaming),
+        latest, prev,
     )
     return 0
 

@@ -188,6 +188,8 @@ def main(argv=None):
     unresolved = []  # (list_name, raw, year, reason)
     membership = {"favorites": [], "watchlist": []}
     searched = 0
+    consecutive_failures = 0
+    finished_pass = False
     seen_year = {}  # cache key -> the year it was first seen under
 
     try:
@@ -227,8 +229,20 @@ def main(argv=None):
                     # title out of the cache so the next run retries it.
                     logger.error("search failed for %r (%s): %s", key, year, exc)
                     unresolved.append((name, key, year, f"search failed: {exc}"))
+                    consecutive_failures += 1
+                    if consecutive_failures >= common.CONSECUTIVE_FAILURE_LIMIT:
+                        msg = (
+                            f"aborting run: {consecutive_failures} searches in a "
+                            f"row failed ({exc}). This is one broken connection, "
+                            "not a list that needs hand-fixing."
+                        )
+                        # Into watchlist.log too, not just stderr: the log is the
+                        # run record, and a silent gap is what we design against.
+                        logger.error(msg)
+                        raise SystemExit(msg)
                     continue
 
+                consecutive_failures = 0
                 if tmdb_id is None:
                     logger.info("unresolved %r (%s): %s", key, year, reason)
                     unresolved.append((name, key, year, reason))
@@ -236,14 +250,34 @@ def main(argv=None):
 
                 resolved[key] = tmdb_id  # only ever adds keys, never replaces
                 membership[name].append(tmdb_id)
+        finished_pass = True
     finally:
-        # Persist both halves of the run's output even if it dies partway
-        # through: a stale unresolved.txt after an aborted run would send a
-        # human off to hand-fix titles that are no longer the problem.
+        # resolved.json is safe to persist partially: it only ever gains keys.
         if len(resolved) != before:
+            # The cache must only ever grow. If it ever shrinks, something has
+            # eaten hand-pinned ids — say so loudly rather than let sync.py
+            # commit the damage to a public repo unremarked.
+            if len(resolved) < before:
+                logger.error(
+                    "resolved.json SHRANK %d -> %d entries; hand-pinned ids may "
+                    "have been lost — check git history before pushing",
+                    before, len(resolved),
+                )
             common.save_json(common.RESOLVED_PATH, resolved)
             logger.info("resolved.json: %d -> %d entries", before, len(resolved))
-        write_unresolved(unresolved, started)
+
+        # unresolved.txt is not. It's a full rewrite, so writing it from a
+        # half-finished pass would delete every title the run never reached --
+        # leaving a worklist that looks nearly clean precisely when the run
+        # checked almost nothing. Keep the previous file and say so.
+        if finished_pass:
+            write_unresolved(unresolved, started)
+        else:
+            logger.error(
+                "run aborted before checking every title; leaving %s from the "
+                "previous run in place — it is now stale",
+                common.UNRESOLVED_PATH.name,
+            )
 
     # Dedupe on tmdb_id, not on the title string.
     fav_ids = sorted(set(membership["favorites"]))
