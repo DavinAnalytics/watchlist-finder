@@ -1,0 +1,16 @@
+# Secrets. Never commit; if the key ever lands in a commit, revoke it in the
+# TMDB dashboard and issue a new one rather than rewriting history.
+.env
+
+# Run logs.
+*.log
+
+# Regenerable, and a binary diff every single day.
+data/movies.db
+
+# Python bytecode.
+__pycache__/
+*.py[cod]
+
+# macOS.
+.DS_Store
