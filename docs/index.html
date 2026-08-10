@@ -55,13 +55,23 @@
   .meta { color: var(--dim); font-size: .82rem; margin-top: .1rem; }
   .meta .on { color: var(--accent); }
   .empty { color: var(--dim); font-size: .9rem; padding: .2rem 0 .4rem; }
+  .hidden-list { margin-top: .5rem; }
+  .hidden-list summary {
+    cursor: pointer; color: var(--dim); font-size: .82rem;
+    padding: .5rem .2rem; list-style: none; user-select: none;
+  }
+  .hidden-list summary::-webkit-details-marker { display: none; }
+  .hidden-list summary::before { content: "▸ "; }
+  .hidden-list[open] summary::before { content: "▾ "; }
+  .hidden-list summary:hover { color: var(--text); }
+  .hidden-list li { opacity: .62; }
   footer { color: var(--dim); font-size: .75rem; margin-top: 3rem; text-align: center; }
 </style>
 </head>
 <body>
 <main>
   <h1>Watchlist</h1>
-  <p class="stamp">Sun 9 Aug, 20:43 · data from 2026-08-09</p>
+  <p class="stamp">Sun 9 Aug, 21:12 · data from 2026-08-09</p>
   
   <div class="counts">
     <div><b>2</b><span>streaming</span></div>
@@ -72,11 +82,22 @@
   <h2>New since the last run</h2>
   <p class="empty">Nothing new since the last run.</p>
 
-  <h2>Everything streaming</h2>
+  <h2>Watchlist streaming</h2>
   <ul>
 <li><div class="title">Calibre</div><div class="meta">2018 · 101 min · <span class="on">Netflix</span></div></li>
 <li><div class="title">Sleep Tight</div><div class="meta">2011 · 101 min · <span class="on">Prime Video</span></div></li>
 </ul>
+  <details class="hidden-list">
+<summary>Not currently streaming (6)</summary>
+<ul>
+<li><div class="title">Caché</div><div class="meta">2005 · 118 min</div></li>
+<li><div class="title">Dark City</div><div class="meta">1998 · 101 min</div></li>
+<li><div class="title">I See You</div><div class="meta">2019 · 98 min</div></li>
+<li><div class="title">Nocturnal Animals</div><div class="meta">2016 · 116 min</div></li>
+<li><div class="title">Possessor</div><div class="meta">2020 · 103 min</div></li>
+<li><div class="title">Strange Darling</div><div class="meta">2024 · 97 min</div></li>
+</ul>
+</details>
 
   <h2>Favorites streaming · rewatch</h2>
   <ul>
@@ -110,6 +131,41 @@
 <li><div class="title">Triple Frontier</div><div class="meta">2019 · 125 min · <span class="on">Netflix</span></div></li>
 <li><div class="title">World War Z</div><div class="meta">2013 · 116 min · <span class="on">Paramount+, Prime Video</span></div></li>
 </ul>
+  <details class="hidden-list">
+<summary>Not currently streaming (30)</summary>
+<ul>
+<li><div class="title">10 Cloverfield Lane</div><div class="meta">2016 · 104 min</div></li>
+<li><div class="title">21 Jump Street</div><div class="meta">2012 · 109 min</div></li>
+<li><div class="title">22 Jump Street</div><div class="meta">2014 · 112 min</div></li>
+<li><div class="title">Alien: Covenant</div><div class="meta">2017 · 122 min</div></li>
+<li><div class="title">Annihilation</div><div class="meta">2018 · 115 min</div></li>
+<li><div class="title">Argo</div><div class="meta">2012 · 120 min</div></li>
+<li><div class="title">Burning</div><div class="meta">2018 · 148 min</div></li>
+<li><div class="title">Django Unchained</div><div class="meta">2012 · 165 min</div></li>
+<li><div class="title">Dune: Part Two</div><div class="meta">2024 · 167 min</div></li>
+<li><div class="title">Fury</div><div class="meta">2014 · 135 min</div></li>
+<li><div class="title">Get Out</div><div class="meta">2017 · 104 min</div></li>
+<li><div class="title">Her</div><div class="meta">2013 · 126 min</div></li>
+<li><div class="title">Inception</div><div class="meta">2010 · 148 min</div></li>
+<li><div class="title">Knives Out</div><div class="meta">2019 · 131 min</div></li>
+<li><div class="title">Looper</div><div class="meta">2012 · 118 min</div></li>
+<li><div class="title">Love Lies Bleeding</div><div class="meta">2024 · 104 min</div></li>
+<li><div class="title">Mad Max: Fury Road</div><div class="meta">2015 · 121 min</div></li>
+<li><div class="title">Meet Cute</div><div class="meta">2022 · 90 min</div></li>
+<li><div class="title">Midsommar</div><div class="meta">2019 · 147 min</div></li>
+<li><div class="title">mother!</div><div class="meta">2017 · 121 min</div></li>
+<li><div class="title">Parasite</div><div class="meta">2019 · 133 min</div></li>
+<li><div class="title">Prometheus</div><div class="meta">2012 · 124 min</div></li>
+<li><div class="title">Shutter Island</div><div class="meta">2010 · 138 min</div></li>
+<li><div class="title">Sunshine</div><div class="meta">2007 · 108 min</div></li>
+<li><div class="title">Tenet</div><div class="meta">2020 · 150 min</div></li>
+<li><div class="title">The Art of Self-Defense</div><div class="meta">2019 · 104 min</div></li>
+<li><div class="title">The Imitation Game</div><div class="meta">2014 · 113 min</div></li>
+<li><div class="title">Train to Busan</div><div class="meta">2016 · 118 min</div></li>
+<li><div class="title">Us</div><div class="meta">2019 · 116 min</div></li>
+<li><div class="title">Whiplash</div><div class="meta">2014 · 107 min</div></li>
+</ul>
+</details>
 
   <footer>8 of 8 watchlist titles polled on 2026-08-09</footer>
 </main>
