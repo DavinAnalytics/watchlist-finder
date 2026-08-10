@@ -16,8 +16,17 @@ These are decisions, not preferences. Don't relitigate them in code.
 - **Read-only output.** The page displays; it does not accept input. There is no
   "add to watchlist" button, no write-back path, no server. New titles are added
   by editing `data/watchlist.txt` directly.
-- **Zero JavaScript in the output.** `sync.py` emits finished HTML. All sorting,
-  grouping, and filtering happens in Python. The page is HTML and CSS only.
+- **No client-side logic that duplicates what render.py already computes.**
+  Sorting, grouping, filtering, diffing, and deciding what's available all
+  happen once, in Python, at generation time. The browser never re-derives any
+  of that. Pure presentation — toggling the visibility of HTML render.py already
+  emitted, with nothing recomputed and no data that wasn't already on the page
+  — is fine; the collapsed "not currently streaming" sections already do this
+  with native `<details>`/`<summary>`, no script required. Clarified
+  2026-08-10: the original wording ("zero JavaScript, HTML and CSS only") was
+  read as an absolute during that day's design-import work and cost a real
+  feature (a tap-to-expand detail view) that this looser, more precise rule
+  would actually have allowed.
 - **Once a day is enough.** No real-time updates, no polling, no webhooks.
 - **The repo lives outside any synced folder.** Not iCloud Drive, not Dropbox,
   not Google Drive — file-sync services corrupt `.git`. GitHub is the sync and
@@ -208,10 +217,15 @@ theme doesn't — that system is light-only, so the dark values in `template.htm
 are hand-derived, keeping the same hue family and copying the source system's
 own documented elevation strategy (shadow on light, a hairline border on dark)
 rather than inventing one. The source mock also included a tap-a-row detail
-dialog built on `window.React`/`window.ReactDOM` with click-driven state — that
-is JavaScript by construction and there is no CSS-only equivalent, so it was
-not ported. Zero JS is a hard constraint, not a style preference; a future
-"can we get the detail view back" has the same answer.
+dialog, built on `window.React`/`window.ReactDOM` with click-driven state, and
+it was not ported that day — read against the pre-2026-08-10 wording of the
+JS constraint, that whole component looked disallowed. Under the rule as
+clarified since, it isn't: the dialog's content (title, year, runtime,
+services) is all data render.py already computes and would already be sitting
+in the page's HTML, hidden; opening it needs only a visibility toggle, no
+recomputation. A native `<details>` (as the "not currently streaming" sections
+already use) or a checkbox/`:target` CSS toggle could do this with no script
+at all. Still unbuilt, but no longer ruled out — pick it up if wanted.
 
 Each streaming title's card shows a real TMDB poster (`/t/p/w92{poster_path}`,
 hotlinked from TMDB's own CDN, no image is stored or proxied) or a decorative
