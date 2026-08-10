@@ -268,10 +268,11 @@ def _retry_after(exc, attempt):
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS movies (
-    tmdb_id INTEGER PRIMARY KEY,
-    title   TEXT NOT NULL,
-    year    INTEGER,
-    runtime INTEGER
+    tmdb_id     INTEGER PRIMARY KEY,
+    title       TEXT NOT NULL,
+    year        INTEGER,
+    runtime     INTEGER,
+    poster_path TEXT
 );
 CREATE TABLE IF NOT EXISTS favorites (
     tmdb_id INTEGER PRIMARY KEY REFERENCES movies(tmdb_id)
@@ -325,6 +326,56 @@ def subscription_for(provider_name):
     return None
 
 
+# TMDB's watch/providers kinds this project stores. Shared between
+# sync_providers.py (what to fetch) and render.py (what to read back), so the
+# two can't drift out of sync the way two copies of the same literal would.
+KIND_FLATRATE = "flatrate"
+FREE_KINDS = ("ads", "free")
+
+# Ad-supported "free to watch" tiers, kept separate from SUBSCRIBED: these
+# aren't something paid for, they're free to anyone. TMDB lists them under the
+# 'ads'/'free' kinds, not 'flatrate'. Scoped to YouTube only, on request —
+# TMDB's ad-supported bucket also includes Tubi, Pluto TV, The Roku Channel,
+# Cineverse and others that were never asked for and would flood the page.
+FREE_TIERS = {
+    "YouTube (free)": ("youtube free",),
+}
+
+
+# Brand colors for the service tag on the page. Every SUBSCRIBED and
+# FREE_TIERS label needs an entry; TAG_FALLBACK covers anything that doesn't
+# (there shouldn't be one, since only those two are ever shown, but a missing
+# key here would otherwise be a KeyError at render time over a cosmetic).
+# YouTube gets its own hue rather than its real-world red, since Netflix
+# already owns red in this set and the point of the badge is to read as a
+# distinct, free-to-anyone tier, not to be brand-accurate.
+SERVICE_COLORS = {
+    "Netflix": "#c8342f",
+    "Prime Video": "#2c93bd",
+    "Hulu": "#1f9d63",
+    "Paramount+": "#3b5fd6",
+    "Peacock": "#8b5cf6",
+    "YouTube (free)": "#c9a227",
+}
+TAG_FALLBACK = "#8a8478"
+
+
+def free_tier_for(provider_name):
+    """-> the free-with-ads label this TMDB provider name is, or None.
+
+    Deliberately not folded into subscription_for(): the badge on the page
+    shows whatever this returns verbatim, and "YouTube (free)" is the whole
+    point — it must read differently from a service actually paid for.
+    """
+    name = (provider_name or "").strip().casefold()
+    if not name or "channel" in name:
+        return None
+    for label, needles in FREE_TIERS.items():
+        if any(n in name for n in needles):
+            return label
+    return None
+
+
 def connect(path=None):
     path = Path(path) if path else DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -332,4 +383,15 @@ def connect(path=None):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """Add columns CREATE TABLE IF NOT EXISTS can't add to an already-existing
+    table. The db is documented as regenerable, but wiping it on every schema
+    change would also wipe poll_log and availability history for no reason."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(movies)")}
+    if "poster_path" not in cols:
+        conn.execute("ALTER TABLE movies ADD COLUMN poster_path TEXT")
+        conn.commit()

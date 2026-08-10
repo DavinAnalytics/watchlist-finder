@@ -75,12 +75,25 @@ search without it.
 ## Schema
 
 ```sql
-movies(tmdb_id PK, title, year, runtime)
+movies(tmdb_id PK, title, year, runtime, poster_path)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 ```
+
+`poster_path` was added 2026-08-10, after `movies` already had 67 rows.
+`CREATE TABLE IF NOT EXISTS` can't add a column to a table that already exists,
+so `common.connect()` runs a small migration after the schema script —
+`PRAGMA table_info`, then `ALTER TABLE ... ADD COLUMN` if it's missing. Any new
+column joins this way; the schema script alone only ever handles a fresh db.
+
+Pre-existing rows are backfilled without a separate script: `upsert_movie()`'s
+short-circuit (skip re-fetching TMDB details for a row already filled in) now
+requires `poster_path IS NOT NULL` too, not just `runtime`. The very next
+resolver run re-fetches every old row once and fills it in. A title TMDB
+genuinely has no poster for keeps re-fetching every run — accepted, same
+tradeoff already made for `runtime IS NULL`, and rare enough not to matter.
 
 `favorites` and `watchlist` are separate tables sharing `movies`.
 
@@ -158,6 +171,20 @@ variants ("Netflix Standard with Ads", "Paramount Plus Essential") that must
 match, and reseller add-ons ("Paramount+ Amazon Channel", "Starz Apple TV
 Channel") that must not — they are separate paid subscriptions, not the service.
 
+**YouTube's free-with-ads tier counts as streaming too**, added 2026-08-10 on
+request. TMDB lists it under the `ads`/`free` kinds, not `flatrate` — a
+different bucket that also contains Tubi, Pluto TV, The Roku Channel, Cineverse
+and others nobody asked for. `common.free_tier_for()` matches only YouTube's
+entry (`FREE_TIERS`, needle `"youtube free"`) and is checked separately from
+`subscription_for()`, never merged into `SUBSCRIBED` — the badge it produces
+reads "YouTube (free)" so it's never mistaken for a paid subscription. Two
+enforcement points, not one: `sync_providers.py` only stores an `ads`/`free`
+row if `free_tier_for()` recognizes it, and `render.py` re-checks on the way
+out, so a stray non-YouTube row can't reach the page even if one somehow
+reached the table. Every read of `availability` now goes through
+`subscription_for()` *or* `free_tier_for()` — update both when adding a rule
+that touches what counts as watchable.
+
 TMDB does not expose expiration dates. "Leaving soon" is not implementable and
 shouldn't be attempted. Daily diffing catches departures the day after they
 happen, which is the accepted tradeoff.
@@ -173,6 +200,26 @@ reads as "not on the list" — the count is what makes the page feel complete
 rather than thin. These use native `<details>`/`<summary>`, which collapse
 without JavaScript. Membership drives them, not the poll, so a title whose fetch
 failed still appears rather than disappearing.
+
+**The look (2026-08-10) is ported from a Claude Design project** ("Organic",
+claude.ai/design), not designed from scratch. Fonts (Caprasimo/Figtree), the
+warm palette, and the rounded card/tag components come from there; the dark
+theme doesn't — that system is light-only, so the dark values in `template.html`
+are hand-derived, keeping the same hue family and copying the source system's
+own documented elevation strategy (shadow on light, a hairline border on dark)
+rather than inventing one. The source mock also included a tap-a-row detail
+dialog built on `window.React`/`window.ReactDOM` with click-driven state — that
+is JavaScript by construction and there is no CSS-only equivalent, so it was
+not ported. Zero JS is a hard constraint, not a style preference; a future
+"can we get the detail view back" has the same answer.
+
+Each streaming title's card shows a real TMDB poster (`/t/p/w92{poster_path}`,
+hotlinked from TMDB's own CDN, no image is stored or proxied) or a decorative
+placeholder when TMDB has none. The collapsed "not currently streaming" rows
+deliberately carry no poster and no service tags — title and meta only, dimmed
+— so the two states read as visually distinct at a glance, not just by list
+position. Service tags are colored per `common.SERVICE_COLORS`; a service with
+no entry there falls back to `common.TAG_FALLBACK` rather than breaking.
 
 The counts and the first two sections are watchlist-only. The favorites section
 is additive, is deduped against the watchlist so nothing renders twice, and is

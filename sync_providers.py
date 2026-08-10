@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Step 2: today's streaming availability.
 
-For every resolved movie, fetch /movie/{id}/watch/providers (US, flatrate) and
-append one row per movie/provider/day into the availability table.
+For every resolved movie, fetch /movie/{id}/watch/providers (US) and append one
+row per movie/provider/day into the availability table.
 
 availability is append-only. Nothing here updates or deletes a row: that history
 is the only reason the "new since yesterday" and "gone" sections can exist, and
@@ -11,6 +11,12 @@ a rewritten past makes both of them lie.
 All US flatrate providers are stored, not just the subscribed five. Filtering to
 the subscription happens at render time, so changing which services are
 subscribed to doesn't require re-fetching anything.
+
+TMDB's ad-supported bucket ('ads'/'free' kinds) is not stored wholesale — it
+also carries Tubi, Pluto TV, The Roku Channel, Cineverse, and more that were
+never asked for. Only entries common.free_tier_for() recognizes (YouTube's free
+tier, currently) are kept, so the availability table doesn't silently grow to
+track services nobody subscribed to or asked about.
 """
 
 import argparse
@@ -20,7 +26,6 @@ import sys
 import common
 
 REGION = "US"
-KIND = "flatrate"
 
 
 def resolved_ids(conn):
@@ -42,17 +47,31 @@ def resolved_ids(conn):
 
 
 def providers_for(tmdb, tmdb_id):
-    """-> list of US flatrate provider names, possibly empty."""
+    """-> sorted list of (kind, provider_name), possibly empty.
+
+    Every flatrate provider is kept. Ad-supported entries are kept only when
+    common.free_tier_for() recognizes them — see the module docstring.
+    """
     data = tmdb.watch_providers(tmdb_id)
     region = ((data or {}).get("results") or {}).get(REGION) or {}
-    names = []
-    for entry in region.get(KIND) or []:
+
+    pairs = set()
+    for entry in region.get(common.KIND_FLATRATE) or []:
         if not isinstance(entry, dict):
             continue
         name = (entry.get("provider_name") or "").strip()
         if name:
-            names.append(name)
-    return sorted(set(names))
+            pairs.add((common.KIND_FLATRATE, name))
+
+    for kind in common.FREE_KINDS:
+        for entry in region.get(kind) or []:
+            if not isinstance(entry, dict):
+                continue
+            name = (entry.get("provider_name") or "").strip()
+            if name and common.free_tier_for(name):
+                pairs.add((kind, name))
+
+    return sorted(pairs)
 
 
 def main(argv=None):
@@ -88,7 +107,7 @@ def main(argv=None):
 
         for tmdb_id in ids:
             try:
-                names = providers_for(tmdb, tmdb_id)
+                pairs = providers_for(tmdb, tmdb_id)
             except common.TMDBAuthError:
                 logger.error("aborting run: TMDB rejected the API key")
                 raise
@@ -116,15 +135,15 @@ def main(argv=None):
                 conn.executemany(
                     "INSERT OR IGNORE INTO availability (tmdb_id, provider, kind, seen_on) "
                     "VALUES (?, ?, ?, ?)",
-                    [(tmdb_id, name, KIND, seen_on) for name in names],
+                    [(tmdb_id, name, kind, seen_on) for kind, name in pairs],
                 )
                 conn.execute(
                     "INSERT OR IGNORE INTO poll_log (tmdb_id, polled_on) VALUES (?, ?)",
                     (tmdb_id, seen_on),
                 )
             polled += 1
-            rows += len(names)
-            if any(common.subscription_for(n) for n in names):
+            rows += len(pairs)
+            if any(common.subscription_for(n) or common.free_tier_for(n) for _, n in pairs):
                 streaming += 1
 
         elapsed = (dt.datetime.now() - started).total_seconds()

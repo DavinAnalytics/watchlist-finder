@@ -91,11 +91,16 @@ def resolve_one(tmdb, raw, year, logger):
 
 
 def upsert_movie(conn, tmdb, tmdb_id, logger):
-    """Fill movies(title, year, runtime). Details are fetched once per id."""
+    """Fill movies(title, year, runtime, poster_path). Details are fetched once
+    per id — except that a row missing poster_path (added 2026-08-10, so every
+    pre-existing row lacks it once) gets one more fetch to backfill it. A title
+    TMDB genuinely has no poster for will keep re-fetching every run; accepted,
+    same tradeoff as the existing null-runtime case, and expected to be rare.
+    """
     row = conn.execute(
-        "SELECT runtime FROM movies WHERE tmdb_id = ?", (tmdb_id,)
+        "SELECT runtime, poster_path FROM movies WHERE tmdb_id = ?", (tmdb_id,)
     ).fetchone()
-    if row is not None and row["runtime"] is not None:
+    if row is not None and row["runtime"] is not None and row["poster_path"] is not None:
         return True
 
     details = tmdb.movie(tmdb_id)
@@ -105,14 +110,17 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
 
     date = (details.get("release_date") or "")
     conn.execute(
-        "INSERT INTO movies (tmdb_id, title, year, runtime) VALUES (?, ?, ?, ?) "
+        "INSERT INTO movies (tmdb_id, title, year, runtime, poster_path) "
+        "VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(tmdb_id) DO UPDATE SET title = excluded.title, "
-        "year = excluded.year, runtime = excluded.runtime",
+        "year = excluded.year, runtime = excluded.runtime, "
+        "poster_path = excluded.poster_path",
         (
             tmdb_id,
             details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
             int(date[:4]) if date[:4].isdigit() else None,
             details.get("runtime"),
+            details.get("poster_path"),
         ),
     )
     return True

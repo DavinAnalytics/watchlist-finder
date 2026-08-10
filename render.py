@@ -8,9 +8,10 @@ Two rules this file exists to honour:
 
 * Zero JavaScript in the output. Every sort, group and filter happens here, in
   Python. The page that lands in docs/ is HTML and CSS.
-* Nothing counts as "streaming" unless it is on one of the subscribed services.
-  Every read of the availability table goes through common.subscription_for(),
-  which is what keeps Max and Disney+ rows out of the counts.
+* Nothing counts as "streaming" unless it is on one of the subscribed services,
+  or free with ads on YouTube. Every read of the availability table goes
+  through common.subscription_for() and common.free_tier_for(), which is what
+  keeps Max, Disney+, Tubi, and Pluto TV rows out of the counts.
 """
 
 import argparse
@@ -49,7 +50,7 @@ LIST_TABLES = ("watchlist", "favorites")  # the only names allowed into a query
 
 
 def snapshot(conn, on, table="watchlist"):
-    """-> {tmdb_id: sorted[subscribed service]} for movies on `table` polled on `on`.
+    """-> {tmdb_id: sorted[service or free-tier label]} for `table`, polled on `on`.
 
     Only ids with a poll_log row are included, so a movie whose fetch failed is
     absent rather than being reported as available nowhere.
@@ -57,29 +58,31 @@ def snapshot(conn, on, table="watchlist"):
     if table not in LIST_TABLES:
         raise ValueError(f"unknown list table {table!r}")
 
+    kinds = (common.KIND_FLATRATE, *common.FREE_KINDS)
+    placeholders = ", ".join("?" * len(kinds))
     rows = conn.execute(
         "SELECT p.tmdb_id AS tmdb_id, a.provider AS provider "
         "FROM poll_log p "
         f"JOIN {table} l ON l.tmdb_id = p.tmdb_id "  # noqa: S608 - whitelisted above
         "LEFT JOIN availability a "
-        "  ON a.tmdb_id = p.tmdb_id AND a.seen_on = p.polled_on AND a.kind = 'flatrate' "
+        f"  ON a.tmdb_id = p.tmdb_id AND a.seen_on = p.polled_on AND a.kind IN ({placeholders}) "
         "WHERE p.polled_on = ?",
-        (on,),
+        (*kinds, on),
     ).fetchall()
 
     snap = {}
     for row in rows:
         services = snap.setdefault(row["tmdb_id"], set())
-        service = common.subscription_for(row["provider"])
-        if service:
-            services.add(service)
+        label = common.subscription_for(row["provider"]) or common.free_tier_for(row["provider"])
+        if label:
+            services.add(label)
     return {k: sorted(v) for k, v in snap.items()}
 
 
 def movie_rows(conn):
     return {
         r["tmdb_id"]: r
-        for r in conn.execute("SELECT tmdb_id, title, year, runtime FROM movies")
+        for r in conn.execute("SELECT tmdb_id, title, year, runtime, poster_path FROM movies")
     }
 
 
@@ -87,10 +90,22 @@ def esc(text):
     return html.escape(str(text), quote=True)
 
 
-def render_list(items, movies, empty_text):
-    """items: [(tmdb_id, [services])] -> an HTML <ul>, or an empty-state note."""
+POSTER_SIZE = "w92"  # TMDB's smallest useful width; this is a phone-width list, not a gallery
+
+
+def render_list(items, movies, empty_text, *, variant="on"):
+    """items: [(tmdb_id, [services])] -> an HTML <ul>, or an empty-state note.
+
+    variant="on": elevated card, poster art (real if TMDB has one, a decorative
+    placeholder if not), colored service tags — for titles actually streaming.
+    variant="off": flat card, dimmed, title/meta only — for the collapsed
+    "not currently streaming" lists, deliberately less visually loud.
+    """
     if not items:
         return f'<p class="empty">{esc(empty_text)}</p>'
+
+    on = variant == "on"
+    card_class = "row-card elev-sm" if on else "row-card row-card-off"
 
     out = ["<ul>"]
     for tmdb_id, services in items:
@@ -98,22 +113,41 @@ def render_list(items, movies, empty_text):
         title = movie["title"] if movie else f"tmdb:{tmdb_id}"
         year = movie["year"] if movie else None
         runtime = movie["runtime"] if movie else None
+        poster_path = movie["poster_path"] if movie else None
 
         meta = []
         if year:
             meta.append(esc(year))
         if runtime:
             meta.append(f"{esc(runtime)} min")
-        line = " · ".join(meta)
-        on = f'<span class="on">{esc(", ".join(services))}</span>' if services else ""
-        if line and on:
-            line = f"{line} · {on}"
-        else:
-            line = line or on
+        meta_html = f'<div class="card-meta">{" · ".join(meta)}</div>' if meta else ""
+
+        poster_html = ""
+        if on:
+            if poster_path:
+                src = f"https://image.tmdb.org/t/p/{POSTER_SIZE}{poster_path}"
+                poster_html = (
+                    f'<img class="poster" src="{esc(src)}" alt="" '
+                    f'loading="lazy" width="52" height="78">'
+                )
+            else:
+                poster_html = '<div class="poster poster-placeholder" aria-hidden="true">poster</div>'
+
+        tags_html = ""
+        if on and services:
+            chips = []
+            for s in services:
+                color = common.SERVICE_COLORS.get(s, common.TAG_FALLBACK)
+                chips.append(
+                    f'<span class="tag" style="--tag-color:{esc(color)}">'
+                    f'<span class="tag-dot"></span>{esc(s)}</span>'
+                )
+            tags_html = f'<div class="tag-row">{"".join(chips)}</div>'
 
         out.append(
-            f'<li><div class="title">{esc(title)}</div>'
-            f'<div class="meta">{line}</div></li>'
+            f'<li class="{card_class}">{poster_html}'
+            f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
+            f"{meta_html}{tags_html}</div></li>"
         )
     out.append("</ul>")
     return "\n".join(out)
@@ -130,7 +164,7 @@ def render_details(summary, items, movies):
     return (
         f'<details class="hidden-list">\n'
         f"<summary>{esc(summary)} ({len(items)})</summary>\n"
-        f"{render_list(items, movies, '')}\n"
+        f"{render_list(items, movies, '', variant='off')}\n"
         f"</details>"
     )
 
