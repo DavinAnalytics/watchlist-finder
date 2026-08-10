@@ -21,7 +21,6 @@ import sys
 
 import common
 
-SHORT_RUNTIME = 100  # minutes
 MIN_POLL_COVERAGE = 0.9  # below this share of the watchlist, say so on the page
 
 
@@ -164,16 +163,15 @@ def main(argv=None):
         new = {i: today[i] for i in comparable if today[i] and not yesterday[i]}
         gone = sorted(i for i in comparable if yesterday[i] and not today[i])
 
-        short = {
-            i: s
-            for i, s in streaming.items()
-            if movies.get(i) and movies[i]["runtime"] and movies[i]["runtime"] < SHORT_RUNTIME
-        }
+        # CLAUDE.md's section list includes an "under 100 minutes" section.
+        # Removed on the owner's instruction, 2026-08-09: the runtime limit was
+        # the section's only reason to exist, so dropping the limit drops the
+        # section. Runtime is still shown per title.
 
         # Deliberate, explicitly authorised departure from CLAUDE.md's
         # "favorites are never filtered by streaming availability" rule: the
         # owner asked for a favorites-streaming section on 2026-08-09. It is
-        # additive only — the counts and the three sections above stay
+        # additive only — the counts and the sections above stay
         # watchlist-only, and anything already on the watchlist is excluded
         # here so it can't appear twice on the page.
         fav_today = snapshot(conn, latest, "favorites")
@@ -215,9 +213,6 @@ def main(argv=None):
             prev_label=esc(prev_label),
             section_new=render_list(
                 sorted(new.items(), key=key), movies, "Nothing new since the last run."
-            ),
-            section_short=render_list(
-                sorted(short.items(), key=key), movies, "Nothing streaming under 100 minutes."
             ),
             section_streaming=render_list(
                 sorted(streaming.items(), key=key),
