@@ -165,13 +165,26 @@ happen, which is the accepted tradeoff.
 ## Page sections
 
 In order: summary counts (streaming / new / gone), new since yesterday,
-everything currently streaming, favorites currently streaming.
+watchlist streaming, favorites streaming.
+
+Each streaming section is followed by a collapsed "not currently streaming (N)"
+block listing the rest of that list. A title that simply vanishes from the page
+reads as "not on the list" — the count is what makes the page feel complete
+rather than thin. These use native `<details>`/`<summary>`, which collapse
+without JavaScript. Membership drives them, not the poll, so a title whose fetch
+failed still appears rather than disappearing.
 
 The counts and the first two sections are watchlist-only. The favorites section
 is additive, is deduped against the watchlist so nothing renders twice, and is
 the one place availability touches favorites — they are still never *filtered*
 by it, and the list stays complete elsewhere as a dedupe check and as something
 to paste into a chat when looking for recommendations.
+
+**Rental prices are not implementable.** `/watch/providers` returns provider
+lists per type (`flatrate`, `rent`, `buy`, `free`, `ads`) and no price field at
+all. Prices come from JustWatch, whose API is not free. A "cheap rentals under
+$N" section cannot be built on the free tier — same category as "leaving soon".
+Don't attempt it; don't approximate it with a made-up price.
 
 "New since yesterday" diffs against the previous poll date, not literally
 yesterday. If the Mac slept for two days, yesterday holds no rows and every
@@ -238,11 +251,11 @@ Source changes are a separate, ordinary commit. `sync.py` does not commit code.
 1. ~~Resolver~~ — done. `resolver.py`.
 2. ~~Provider sync~~ — done. `sync_providers.py`.
 3. ~~Renderer~~ — done. `render.py`, plus `sync.py` to chain and publish.
-4. launchd plist — **still to build.** The precondition (runs clean by hand) is
-   met: the full chain has run clean end to end, including the push.
+4. ~~launchd plist~~ — done. `install_launchd.py` generates and bootstraps it;
+   `--uninstall` removes it.
 
 Built and live 2026-08-09: 67 titles resolved, 0 unresolved, publishing to
-GitHub Pages.
+GitHub Pages on a 04:00 schedule.
 
 ## launchd
 
@@ -252,4 +265,12 @@ GitHub Pages.
 launchd is used over cron deliberately: if the Mac is asleep at 04:00, cron
 skips the run silently, launchd queues it and fires on wake.
 
-Load with `launchctl bootstrap gui/$(id -u) <plist>`.
+Run `python3 install_launchd.py` to generate and bootstrap it. The generator
+derives every path at runtime (`sys.executable`, `Path(__file__)`, `getpass`),
+so no username is hardcoded in the repo even though the plist it writes contains
+absolute paths — the plist lives outside the repo and is not versioned.
+
+Verify a change with `launchctl kickstart -p gui/$(id -u)/com.<user>.watchlist`
+rather than waiting for 04:00. launchd runs with a minimal environment, so
+"works in my shell" proves nothing about whether `git` and its credentials
+resolve inside the job.

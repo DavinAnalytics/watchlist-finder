@@ -119,6 +119,29 @@ def render_list(items, movies, empty_text):
     return "\n".join(out)
 
 
+def render_details(summary, items, movies):
+    """A collapsed <details> block, or "" when there's nothing to hide.
+
+    <details>/<summary> is native HTML: it collapses and expands with no
+    JavaScript, which the zero-JS rule requires.
+    """
+    if not items:
+        return ""
+    return (
+        f'<details class="hidden-list">\n'
+        f"<summary>{esc(summary)} ({len(items)})</summary>\n"
+        f"{render_list(items, movies, '')}\n"
+        f"</details>"
+    )
+
+
+def members(conn, table):
+    """Every tmdb_id on a list, streaming or not."""
+    if table not in LIST_TABLES:
+        raise ValueError(f"unknown list table {table!r}")
+    return {r["tmdb_id"] for r in conn.execute(f"SELECT tmdb_id FROM {table}")}  # noqa: S608
+
+
 def sort_key(movies):
     def key(item):
         movie = movies.get(item[0])
@@ -177,6 +200,17 @@ def main(argv=None):
         fav_today = snapshot(conn, latest, "favorites")
         fav_streaming = {i: s for i, s in fav_today.items() if s and i not in today}
 
+        # Everything not currently streaming, collapsed rather than dropped. A
+        # title silently missing from the page reads as "not on the list"; the
+        # counts here are what make the page feel complete instead of thin.
+        # Membership drives these, not the poll, so a title that failed its
+        # fetch still appears rather than vanishing.
+        watch_hidden = {i: [] for i in members(conn, "watchlist") - set(streaming)}
+        fav_hidden = {
+            i: []
+            for i in members(conn, "favorites") - set(fav_streaming) - members(conn, "watchlist")
+        }
+
         key = sort_key(movies)
         prev_label = prev or "the last run"
         banners = []
@@ -219,10 +253,16 @@ def main(argv=None):
                 movies,
                 "Nothing on the watchlist is streaming right now.",
             ),
+            section_watchlist_hidden=render_details(
+                "Not currently streaming", sorted(watch_hidden.items(), key=key), movies
+            ),
             section_favorites=render_list(
                 sorted(fav_streaming.items(), key=key),
                 movies,
                 "None of your favorites are streaming right now.",
+            ),
+            section_favorites_hidden=render_details(
+                "Not currently streaming", sorted(fav_hidden.items(), key=key), movies
             ),
             footer=esc(
                 f"{len(today)} of {watchlist_size} watchlist titles polled on {latest}"

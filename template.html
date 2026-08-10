@@ -55,6 +55,16 @@
   .meta { color: var(--dim); font-size: .82rem; margin-top: .1rem; }
   .meta .on { color: var(--accent); }
   .empty { color: var(--dim); font-size: .9rem; padding: .2rem 0 .4rem; }
+  .hidden-list { margin-top: .5rem; }
+  .hidden-list summary {
+    cursor: pointer; color: var(--dim); font-size: .82rem;
+    padding: .5rem .2rem; list-style: none; user-select: none;
+  }
+  .hidden-list summary::-webkit-details-marker { display: none; }
+  .hidden-list summary::before { content: "▸ "; }
+  .hidden-list[open] summary::before { content: "▾ "; }
+  .hidden-list summary:hover { color: var(--text); }
+  .hidden-list li { opacity: .62; }
   footer { color: var(--dim); font-size: .75rem; margin-top: 3rem; text-align: center; }
 </style>
 </head>
@@ -72,11 +82,13 @@
   <h2>New since $prev_label</h2>
   $section_new
 
-  <h2>Everything streaming</h2>
+  <h2>Watchlist streaming</h2>
   $section_streaming
+  $section_watchlist_hidden
 
   <h2>Favorites streaming · rewatch</h2>
   $section_favorites
+  $section_favorites_hidden
 
   <footer>$footer</footer>
 </main>
