@@ -1,6 +1,4 @@
 # Titles TMDB could not resolve confidently. Fix by adding the correct
 # id to data/resolved.json by hand, keyed on the exact raw string below.
-# regenerated 2026-08-09T20:31:27
+# regenerated 2026-08-09T20:35:40
 
-watchlist	2005	Cacher	no TMDB results
-watchlist	2023	Strange Darling	year mismatch: "Strange Darling" is 2024, listed under 2023 (id 1029281)
