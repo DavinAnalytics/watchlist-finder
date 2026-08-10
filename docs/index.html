@@ -6,56 +6,129 @@
 <meta name="color-scheme" content="dark light">
 <title>Watchlist</title>
 <style>
+  /* Palette, type and component language ported from the "Organic" design
+     system (claude.ai/design). That system is light-only; the dark values
+     below are hand-derived, keeping the same hue family and following its own
+     documented elevation strategy — shadows on light, a hairline edge on dark
+     — rather than a naive invert. */
+  @import url('https://fonts.googleapis.com/css2?family=Caprasimo:wght@400&family=Figtree:wght@400;600;700&display=swap');
+
   :root {
-    --bg: #12110f;
-    --card: #1b1917;
-    --line: #2e2b27;
-    --text: #ece7df;
-    --dim: #97918a;
-    --accent: #e0b872;
-    --gone: #b8736a;
+    --bg: #1c1712;
+    --surface: #29221b;
+    --text: #f3ead9;
+    --dim: color-mix(in srgb, var(--text) 55%, transparent);
+    --divider: color-mix(in srgb, var(--text) 16%, transparent);
+    --accent: #e2955c;
+    --accent-2: #ccdbb2;
+    --banner-bg: color-mix(in srgb, var(--accent) 20%, var(--bg));
+    --banner-fg: color-mix(in srgb, var(--accent) 78%, var(--text));
+    --poster-a: #332b22;
+    --poster-b: #241e18;
+    --poster-label: #b6ab98;
+    --shadow-sm: none;
+    --elev-border: 1px solid var(--divider);
+    --font-heading: "Caprasimo", system-ui, sans-serif;
+    --font-body: "Figtree", system-ui, sans-serif;
+    --radius-card: 1.9rem;
+    --radius-tag: 999px;
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #faf7f2; --card: #fff; --line: #e5ded2;
-      --text: #22201d; --dim: #6d675f; --accent: #8a6414; --gone: #9c463a;
+      --bg: #f5ead8;
+      --surface: #ebddc5;
+      --text: #201e1d;
+      --accent: #c67139;
+      --accent-2: #56633f;
+      --banner-bg: #fff2eb;
+      --banner-fg: #643312;
+      --poster-a: #eee7db;
+      --poster-b: #dcd3c4;
+      --poster-label: #82796a;
+      --shadow-sm: 0 1px 2px color-mix(in srgb, #2e2b25 14%, transparent);
+      --elev-border: none;
     }
   }
+
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 1.25rem 1rem 4rem;
+    margin: 0; padding: 1.5rem 1rem 4rem;
     background: var(--bg); color: var(--text);
-    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font: 400 16px/1.55 var(--font-body);
     -webkit-text-size-adjust: 100%;
   }
-  main { max-width: 34rem; margin: 0 auto; }
-  h1 { font-size: 1.35rem; margin: 0 0 .15rem; letter-spacing: -.01em; }
+  main { max-width: 27.5rem; margin: 0 auto; }
+  h1 {
+    font-family: var(--font-heading); font-weight: 400;
+    font-size: 1.7rem; margin: 0 0 .3rem; letter-spacing: -.015em;
+  }
   .stamp { color: var(--dim); font-size: .8rem; margin: 0 0 1.25rem; }
+
   .stale {
-    background: var(--gone); color: #fff; padding: .6rem .8rem;
-    border-radius: .5rem; font-size: .85rem; margin: 0 0 1rem;
+    background: var(--banner-bg); color: var(--banner-fg);
+    padding: .7rem .9rem; border-radius: 1rem; font-size: .85rem; margin: 0 0 .6rem;
   }
-  .counts { display: flex; gap: .5rem; margin: 0 0 1.75rem; }
+
+  .counts { display: flex; gap: .55rem; margin: 0 0 1.9rem; }
   .counts div {
-    flex: 1; background: var(--card); border: 1px solid var(--line);
-    border-radius: .6rem; padding: .7rem .5rem; text-align: center;
+    flex: 1; background: var(--surface); border: var(--elev-border);
+    box-shadow: var(--shadow-sm); border-radius: var(--radius-card);
+    padding: .8rem .5rem; text-align: center; display: flex; flex-direction: column; gap: .1rem;
   }
-  .counts b { display: block; font-size: 1.5rem; font-weight: 600; line-height: 1.1; }
-  .counts span { color: var(--dim); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+  .counts b {
+    font-family: var(--font-heading); font-weight: 400;
+    font-size: 1.55rem; line-height: 1.1;
+  }
+  .counts .new b { color: var(--accent-2); }
+  .counts span { color: var(--dim); font-size: .65rem; text-transform: uppercase; letter-spacing: .08em; }
+
   h2 {
-    font-size: .78rem; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--dim); font-weight: 600; margin: 2rem 0 .6rem;
+    font-family: var(--font-heading); font-weight: 400;
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 2rem 0 .7rem;
   }
+
   ul { list-style: none; margin: 0; padding: 0; }
-  li {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: .6rem; padding: .65rem .8rem; margin-bottom: .4rem;
+  li.row-card {
+    display: flex; align-items: center; gap: .75rem;
+    background: var(--surface); border: var(--elev-border); box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-card); padding: .6rem .7rem; margin-bottom: .5rem;
   }
-  .title { font-weight: 600; }
-  .meta { color: var(--dim); font-size: .82rem; margin-top: .1rem; }
-  .meta .on { color: var(--accent); }
+  li.row-card-off {
+    box-shadow: none; border: 1px solid var(--divider);
+    padding: .55rem .75rem; opacity: .62;
+  }
+  .poster {
+    flex: none; width: 3.25rem; height: 4.875rem; border-radius: .65rem;
+    object-fit: cover; background: var(--poster-b);
+  }
+  .poster-placeholder {
+    display: flex; align-items: center; justify-content: center;
+    background: repeating-linear-gradient(45deg, var(--poster-a) 0 6px, var(--poster-b) 6px 12px);
+    font: 600 7px/1 var(--font-body); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--poster-label);
+  }
+  .row-info { flex: 1; min-width: 0; }
+  .card-title { font-family: var(--font-heading); font-weight: 400; font-size: 1rem; }
+  .row-card-off .card-title { font-family: var(--font-body); font-weight: 600; font-size: .875rem; }
+  .card-meta { color: var(--dim); font-size: .8rem; margin-top: .15rem; }
+
+  .tag-row { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .45rem; }
+  .tag {
+    --tag-bg: color-mix(in srgb, var(--tag-color) 16%, var(--bg));
+    --tag-fg: color-mix(in srgb, var(--tag-color) 62%, var(--text));
+    display: inline-flex; align-items: center; font-size: .7rem;
+    letter-spacing: .01em; padding: .2rem .6rem; border-radius: var(--radius-tag);
+    background: var(--tag-bg); color: var(--tag-fg);
+  }
+  .tag-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--tag-color);
+    display: inline-block; margin-right: .35rem;
+  }
+
   .empty { color: var(--dim); font-size: .9rem; padding: .2rem 0 .4rem; }
-  .hidden-list { margin-top: .5rem; }
+
+  .hidden-list { margin-top: .3rem; }
   .hidden-list summary {
     cursor: pointer; color: var(--dim); font-size: .82rem;
     padding: .5rem .2rem; list-style: none; user-select: none;
@@ -64,18 +137,18 @@
   .hidden-list summary::before { content: "▸ "; }
   .hidden-list[open] summary::before { content: "▾ "; }
   .hidden-list summary:hover { color: var(--text); }
-  .hidden-list li { opacity: .62; }
+
   footer { color: var(--dim); font-size: .75rem; margin-top: 3rem; text-align: center; }
 </style>
 </head>
 <body>
 <main>
   <h1>Watchlist</h1>
-  <p class="stamp">Mon 10 Aug, 04:00 · data from 2026-08-10</p>
+  <p class="stamp">Mon 10 Aug, 14:16 · data from 2026-08-10</p>
   
   <div class="counts">
-    <div><b>2</b><span>streaming</span></div>
-    <div><b>0</b><span>new</span></div>
+    <div><b>4</b><span>streaming</span></div>
+    <div class="new"><b>0</b><span>new</span></div>
     <div><b>0</b><span>gone</span></div>
   </div>
 
@@ -84,90 +157,93 @@
 
   <h2>Watchlist streaming</h2>
   <ul>
-<li><div class="title">Calibre</div><div class="meta">2018 · 101 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Sleep Tight</div><div class="meta">2011 · 101 min · <span class="on">Prime Video</span></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/gCVOQzV7Z556WnJFNeX7y8BFhyW.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Calibre</div><div class="card-meta">2018 · 101 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/rWcfOdY7TU6lTdazWj0ebDZnAfO.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Good Luck, Have Fun, Don&#x27;t Die</div><div class="card-meta">2026 · 134 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/9u7sUTYPPTxGCXbkcw8FTq50PnO.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Redux Redux</div><div class="card-meta">2025 · 109 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/i44Mr6t3reXt7z28OMCPZTllRfr.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Sleep Tight</div><div class="card-meta">2011 · 101 min</div><div class="tag-row"><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
 </ul>
   <details class="hidden-list">
-<summary>Not currently streaming (6)</summary>
+<summary>Not currently streaming (7)</summary>
 <ul>
-<li><div class="title">Caché</div><div class="meta">2005 · 118 min</div></li>
-<li><div class="title">Dark City</div><div class="meta">1998 · 101 min</div></li>
-<li><div class="title">I See You</div><div class="meta">2019 · 98 min</div></li>
-<li><div class="title">Nocturnal Animals</div><div class="meta">2016 · 116 min</div></li>
-<li><div class="title">Possessor</div><div class="meta">2020 · 103 min</div></li>
-<li><div class="title">Strange Darling</div><div class="meta">2024 · 97 min</div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Caché</div><div class="card-meta">2005 · 118 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Carolina Caroline</div><div class="card-meta">2026 · 107 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Dark City</div><div class="card-meta">1998 · 101 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">I See You</div><div class="card-meta">2019 · 98 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Nocturnal Animals</div><div class="card-meta">2016 · 116 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Possessor</div><div class="card-meta">2020 · 103 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Strange Darling</div><div class="card-meta">2024 · 97 min</div></div></li>
 </ul>
 </details>
 
   <h2>Favorites streaming · rewatch</h2>
   <ul>
-<li><div class="title">A Quiet Place</div><div class="meta">2018 · 91 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">Arrival</div><div class="meta">2016 · 116 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">Baby Driver</div><div class="meta">2017 · 113 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">Blade Runner 2049</div><div class="meta">2017 · 164 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">Brawl in Cell Block 99</div><div class="meta">2017 · 132 min · <span class="on">Hulu</span></div></li>
-<li><div class="title">Bullet Train</div><div class="meta">2022 · 126 min · <span class="on">Hulu</span></div></li>
-<li><div class="title">Don&#x27;t Breathe</div><div class="meta">2016 · 89 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Enemy</div><div class="meta">2014 · 91 min · <span class="on">Prime Video</span></div></li>
-<li><div class="title">Everything Everywhere All at Once</div><div class="meta">2022 · 140 min · <span class="on">Hulu</span></div></li>
-<li><div class="title">Interstellar</div><div class="meta">2014 · 169 min · <span class="on">Hulu, Paramount+, Prime Video</span></div></li>
-<li><div class="title">Jungle</div><div class="meta">2017 · 115 min · <span class="on">Prime Video</span></div></li>
-<li><div class="title">Night in Paradise</div><div class="meta">2020 · 131 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Nightcrawler</div><div class="meta">2014 · 118 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">No Other Choice</div><div class="meta">2025 · 139 min · <span class="on">Hulu</span></div></li>
-<li><div class="title">Nobody</div><div class="meta">2021 · 91 min · <span class="on">Peacock</span></div></li>
-<li><div class="title">Obsession</div><div class="meta">2026 · 109 min · <span class="on">Peacock</span></div></li>
-<li><div class="title">Overlord</div><div class="meta">2018 · 110 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">Palm Springs</div><div class="meta">2020 · 90 min · <span class="on">Hulu</span></div></li>
-<li><div class="title">Poor Things</div><div class="meta">2023 · 141 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Saltburn</div><div class="meta">2023 · 131 min · <span class="on">Hulu, Prime Video</span></div></li>
-<li><div class="title">Super Dark Times</div><div class="meta">2017 · 103 min · <span class="on">Prime Video</span></div></li>
-<li><div class="title">The Autopsy of Jane Doe</div><div class="meta">2016 · 86 min · <span class="on">Paramount+</span></div></li>
-<li><div class="title">The Martian</div><div class="meta">2015 · 141 min · <span class="on">Prime Video</span></div></li>
-<li><div class="title">The Rip</div><div class="meta">2026 · 113 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">The Wolf of Wall Street</div><div class="meta">2013 · 180 min · <span class="on">Hulu, Paramount+, Prime Video</span></div></li>
-<li><div class="title">tick, tick... BOOM!</div><div class="meta">2021 · 120 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Time to Hunt</div><div class="meta">2020 · 135 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">Triple Frontier</div><div class="meta">2019 · 125 min · <span class="on">Netflix</span></div></li>
-<li><div class="title">World War Z</div><div class="meta">2013 · 116 min · <span class="on">Paramount+, Prime Video</span></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/nAU74GmpUk7t5iklEp3bufwDq4n.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">A Quiet Place</div><div class="card-meta">2018 · 91 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/x2FJsf1ElAgr63Y3PNPtJrcmpoe.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Arrival</div><div class="card-meta">2016 · 116 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/tYzFuYXmT8LOYASlFCkaPiAFAl0.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Baby Driver</div><div class="card-meta">2017 · 113 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/gajva2L0rPYkEWjzgFlBXCAVBE5.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Blade Runner 2049</div><div class="card-meta">2017 · 164 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/39daqfOgnLjz9alwcNkZAGEbUry.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Brawl in Cell Block 99</div><div class="card-meta">2017 · 132 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/j8szC8OgrejDQjjMKSVXyaAjw3V.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Bullet Train</div><div class="card-meta">2022 · 126 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/dSxHyPZ2nipSfvdft4IhQKjk5eZ.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Don&#x27;t Breathe</div><div class="card-meta">2016 · 89 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/vf40tyDRKZsBmaLsYeopzfFLzLx.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Enemy</div><div class="card-meta">2014 · 91 min</div><div class="tag-row"><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/u68AjlvlutfEIcpmbYpKcdi09ut.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Everything Everywhere All at Once</div><div class="card-meta">2022 · 140 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span><span class="tag" style="--tag-color:#c9a227"><span class="tag-dot"></span>YouTube (free)</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Inception</div><div class="card-meta">2010 · 148 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c9a227"><span class="tag-dot"></span>YouTube (free)</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/yQvGrMoipbRoddT0ZR8tPoR7NfX.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Interstellar</div><div class="card-meta">2014 · 169 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/tDgxknTVwrScxpCYyGUjXSn5NRk.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Jungle</div><div class="card-meta">2017 · 115 min</div><div class="tag-row"><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span><span class="tag" style="--tag-color:#c9a227"><span class="tag-dot"></span>YouTube (free)</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/dYCWUAidqgakGETwZkfGxU7CWhL.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Night in Paradise</div><div class="card-meta">2020 · 131 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/j9HrX8f7GbZQm1BrBiR40uFQZSb.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Nightcrawler</div><div class="card-meta">2014 · 118 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/vc2S0dvgpsM0XfSiXZDMVkRCSSU.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">No Other Choice</div><div class="card-meta">2025 · 139 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/oBgWY00bEFeZ9N25wWVyuQddbAo.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Nobody</div><div class="card-meta">2021 · 91 min</div><div class="tag-row"><span class="tag" style="--tag-color:#8b5cf6"><span class="tag-dot"></span>Peacock</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/bRwnj8WEKBCvmfeUNOukJPwB43K.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Obsession</div><div class="card-meta">2026 · 109 min</div><div class="tag-row"><span class="tag" style="--tag-color:#8b5cf6"><span class="tag-dot"></span>Peacock</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/l76Rgp32z2UxjULApxGXAPpYdAP.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Overlord</div><div class="card-meta">2018 · 110 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/gnAfqiV7yO3Jq9IntTmwkcaICqc.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Palm Springs</div><div class="card-meta">2020 · 90 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/kCGlIMHnOm8JPXq3rXM6c5wMxcT.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Poor Things</div><div class="card-meta">2023 · 141 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/zGTfMwG112BC66mpaveVxoWPOaB.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Saltburn</div><div class="card-meta">2023 · 131 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/7sJoNicLJ9EZwetp5ucjS8qQ9g1.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Super Dark Times</div><div class="card-meta">2017 · 103 min</div><div class="tag-row"><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/6K0wjP8kPCiPYy9PtXBGuypyt5I.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">The Autopsy of Jane Doe</div><div class="card-meta">2016 · 86 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/fASz8A0yFE3QB6LgGoOfwvFSseV.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">The Martian</div><div class="card-meta">2015 · 141 min</div><div class="tag-row"><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/4wsYWH73Hb1B6noGIFaRQSAkuXj.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">The Rip</div><div class="card-meta">2026 · 113 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/kW9LmvYHAaS9iA0tHmZVq8hQYoq.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">The Wolf of Wall Street</div><div class="card-meta">2013 · 180 min</div><div class="tag-row"><span class="tag" style="--tag-color:#1f9d63"><span class="tag-dot"></span>Hulu</span><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/DPmfcuR8fh8ROYXgdjrAjSGA0o.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">tick, tick... BOOM!</div><div class="card-meta">2021 · 120 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/bkuuvDoPkOJpg0ZDzHkUWt8ZG5A.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Time to Hunt</div><div class="card-meta">2020 · 135 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/aBw8zYuAljVM1FeK5bZKITPH8ZD.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">Triple Frontier</div><div class="card-meta">2019 · 125 min</div><div class="tag-row"><span class="tag" style="--tag-color:#c8342f"><span class="tag-dot"></span>Netflix</span></div></div></li>
+<li class="row-card elev-sm"><img class="poster" src="https://image.tmdb.org/t/p/w92/aCnVdvExw6UWSeQfr0tUH3jr4qG.jpg" alt="" loading="lazy" width="52" height="78"><div class="row-info"><div class="card-title">World War Z</div><div class="card-meta">2013 · 116 min</div><div class="tag-row"><span class="tag" style="--tag-color:#3b5fd6"><span class="tag-dot"></span>Paramount+</span><span class="tag" style="--tag-color:#2c93bd"><span class="tag-dot"></span>Prime Video</span></div></div></li>
 </ul>
   <details class="hidden-list">
-<summary>Not currently streaming (30)</summary>
+<summary>Not currently streaming (29)</summary>
 <ul>
-<li><div class="title">10 Cloverfield Lane</div><div class="meta">2016 · 104 min</div></li>
-<li><div class="title">21 Jump Street</div><div class="meta">2012 · 109 min</div></li>
-<li><div class="title">22 Jump Street</div><div class="meta">2014 · 112 min</div></li>
-<li><div class="title">Alien: Covenant</div><div class="meta">2017 · 122 min</div></li>
-<li><div class="title">Annihilation</div><div class="meta">2018 · 115 min</div></li>
-<li><div class="title">Argo</div><div class="meta">2012 · 120 min</div></li>
-<li><div class="title">Burning</div><div class="meta">2018 · 148 min</div></li>
-<li><div class="title">Django Unchained</div><div class="meta">2012 · 165 min</div></li>
-<li><div class="title">Dune: Part Two</div><div class="meta">2024 · 167 min</div></li>
-<li><div class="title">Fury</div><div class="meta">2014 · 135 min</div></li>
-<li><div class="title">Get Out</div><div class="meta">2017 · 104 min</div></li>
-<li><div class="title">Her</div><div class="meta">2013 · 126 min</div></li>
-<li><div class="title">Inception</div><div class="meta">2010 · 148 min</div></li>
-<li><div class="title">Knives Out</div><div class="meta">2019 · 131 min</div></li>
-<li><div class="title">Looper</div><div class="meta">2012 · 118 min</div></li>
-<li><div class="title">Love Lies Bleeding</div><div class="meta">2024 · 104 min</div></li>
-<li><div class="title">Mad Max: Fury Road</div><div class="meta">2015 · 121 min</div></li>
-<li><div class="title">Meet Cute</div><div class="meta">2022 · 90 min</div></li>
-<li><div class="title">Midsommar</div><div class="meta">2019 · 147 min</div></li>
-<li><div class="title">mother!</div><div class="meta">2017 · 121 min</div></li>
-<li><div class="title">Parasite</div><div class="meta">2019 · 133 min</div></li>
-<li><div class="title">Prometheus</div><div class="meta">2012 · 124 min</div></li>
-<li><div class="title">Shutter Island</div><div class="meta">2010 · 138 min</div></li>
-<li><div class="title">Sunshine</div><div class="meta">2007 · 108 min</div></li>
-<li><div class="title">Tenet</div><div class="meta">2020 · 150 min</div></li>
-<li><div class="title">The Art of Self-Defense</div><div class="meta">2019 · 104 min</div></li>
-<li><div class="title">The Imitation Game</div><div class="meta">2014 · 113 min</div></li>
-<li><div class="title">Train to Busan</div><div class="meta">2016 · 118 min</div></li>
-<li><div class="title">Us</div><div class="meta">2019 · 116 min</div></li>
-<li><div class="title">Whiplash</div><div class="meta">2014 · 107 min</div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">10 Cloverfield Lane</div><div class="card-meta">2016 · 104 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">21 Jump Street</div><div class="card-meta">2012 · 109 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">22 Jump Street</div><div class="card-meta">2014 · 112 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Alien: Covenant</div><div class="card-meta">2017 · 122 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Annihilation</div><div class="card-meta">2018 · 115 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Argo</div><div class="card-meta">2012 · 120 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Burning</div><div class="card-meta">2018 · 148 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Django Unchained</div><div class="card-meta">2012 · 165 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Dune: Part Two</div><div class="card-meta">2024 · 167 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Fury</div><div class="card-meta">2014 · 135 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Get Out</div><div class="card-meta">2017 · 104 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Her</div><div class="card-meta">2013 · 126 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Knives Out</div><div class="card-meta">2019 · 131 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Looper</div><div class="card-meta">2012 · 118 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Love Lies Bleeding</div><div class="card-meta">2024 · 104 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Mad Max: Fury Road</div><div class="card-meta">2015 · 121 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Meet Cute</div><div class="card-meta">2022 · 90 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Midsommar</div><div class="card-meta">2019 · 147 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">mother!</div><div class="card-meta">2017 · 121 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Parasite</div><div class="card-meta">2019 · 133 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Prometheus</div><div class="card-meta">2012 · 124 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Shutter Island</div><div class="card-meta">2010 · 138 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Sunshine</div><div class="card-meta">2007 · 108 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Tenet</div><div class="card-meta">2020 · 150 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">The Art of Self-Defense</div><div class="card-meta">2019 · 104 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">The Imitation Game</div><div class="card-meta">2014 · 113 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Train to Busan</div><div class="card-meta">2016 · 118 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Us</div><div class="card-meta">2019 · 116 min</div></div></li>
+<li class="row-card row-card-off"><div class="row-info"><div class="card-title">Whiplash</div><div class="card-meta">2014 · 107 min</div></div></li>
 </ul>
 </details>
 
-  <footer>8 of 8 watchlist titles polled on 2026-08-10</footer>
+  <footer>11 of 11 watchlist titles polled on 2026-08-10</footer>
 </main>
 </body>
 </html>
