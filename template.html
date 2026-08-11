@@ -124,12 +124,15 @@
   }
   /* One rule per filterable service. Slugs must match _slug() in render.py
      exactly — "Prime Video" -> "prime-video", "Paramount+" -> "paramount",
-     "YouTube (free)" -> "youtube-free" — or a pill would filter to nothing. */
+     "Apple TV+" -> "apple-tv", "YouTube (free)" -> "youtube-free" — or a
+     pill would filter to nothing. */
   #filter-netflix:checked ~ main .row-card:not(.row-card-off):not([data-services~="netflix"]) { display: none; }
   #filter-hulu:checked ~ main .row-card:not(.row-card-off):not([data-services~="hulu"]) { display: none; }
   #filter-prime-video:checked ~ main .row-card:not(.row-card-off):not([data-services~="prime-video"]) { display: none; }
   #filter-peacock:checked ~ main .row-card:not(.row-card-off):not([data-services~="peacock"]) { display: none; }
   #filter-paramount:checked ~ main .row-card:not(.row-card-off):not([data-services~="paramount"]) { display: none; }
+  #filter-max:checked ~ main .row-card:not(.row-card-off):not([data-services~="max"]) { display: none; }
+  #filter-apple-tv:checked ~ main .row-card:not(.row-card-off):not([data-services~="apple-tv"]) { display: none; }
   #filter-youtube-free:checked ~ main .row-card:not(.row-card-off):not([data-services~="youtube-free"]) { display: none; }
 
   /* Active-pill highlight only — cosmetic, not the filtering mechanism
@@ -144,6 +147,8 @@
   body:has(#filter-prime-video:checked) label[for="filter-prime-video"],
   body:has(#filter-peacock:checked) label[for="filter-peacock"],
   body:has(#filter-paramount:checked) label[for="filter-paramount"],
+  body:has(#filter-max:checked) label[for="filter-max"],
+  body:has(#filter-apple-tv:checked) label[for="filter-apple-tv"],
   body:has(#filter-youtube-free:checked) label[for="filter-youtube-free"] {
     background: color-mix(in srgb, var(--tag-color) 85%, var(--bg));
     color: color-mix(in srgb, var(--tag-color) 20%, white);

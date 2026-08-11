@@ -206,14 +206,19 @@ def render_list(items, movies, empty_text, *, variant="on"):
         movie = movies.get(tmdb_id)
         title = movie["title"] if movie else f"tmdb:{tmdb_id}"
         year = movie["year"] if movie else None
-        runtime = movie["runtime"] if movie else None
         poster_path = movie["poster_path"] if movie else None
+        genres = (movie["genres"] if movie else "") or ""
 
+        # Genre, not runtime, on the row card — runtime is still one tap away
+        # in the detail dialog, which this doesn't touch. Owner's call,
+        # 2026-08-11: genre is more useful for "what is this" at a glance
+        # than a number, on both the streaming and not-currently-streaming
+        # variants.
         meta = []
         if year:
             meta.append(esc(year))
-        if runtime:
-            meta.append(f"{esc(runtime)} min")
+        if genres:
+            meta.append(esc(genres))
         meta_html = f'<div class="card-meta">{" · ".join(meta)}</div>' if meta else ""
 
         poster = poster_html(poster_path) if on else ""
@@ -445,10 +450,11 @@ def render_hero(tmdb_id, services, movies):
 
     title = movie["title"]
     year = movie["year"]
-    runtime = movie["runtime"]
+    genres = movie["genres"] or ""
     overview = movie["overview"] or ""
 
-    meta = " · ".join(esc(v) for v in (year, f"{runtime} min" if runtime else None) if v)
+    # Same swap as the row cards: genre instead of runtime on the main page.
+    meta = " · ".join(esc(v) for v in (year, genres or None) if v)
     poster = poster_html(
         movie["poster_path"], css_class="poster hero-poster", width=72, height=108
     )

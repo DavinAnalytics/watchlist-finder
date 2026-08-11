@@ -330,13 +330,28 @@ SUBSCRIBED = {
     "Peacock": ("peacock",),
     "Prime Video": ("amazon prime video", "prime video"),
     "Paramount+": ("paramount plus", "paramount+"),
+    # Not yet subscribed to as of 2026-08-11 — added ahead of time so the day
+    # a real subscription starts, the page reflects it with no code change.
+    # TMDB's raw provider_name for each is confirmed live, not assumed:
+    # "HBO Max" (never bare "Max" — that needle would also catch "Cinemax"),
+    # "Apple TV" (never "Apple TV+" — TMDB doesn't carry the "+").
+    "Max": ("hbo max",),
+    "Apple TV+": ("apple tv",),
 }
 
 
 def subscription_for(provider_name):
     """-> the subscribed service this TMDB provider name is, or None."""
     name = (provider_name or "").strip().casefold()
-    if not name or "channel" in name:
+    # "store" excludes "Apple TV Store" (a rent/buy storefront, unrelated to
+    # the Apple TV+ subscription) from the "apple tv" needle above — the same
+    # kind of false-positive "channel" already guards against for resellers.
+    # Both guards are global, not per-service: adding a future SUBSCRIBED
+    # entry whose real flatrate name happens to contain "channel" or "store"
+    # would silently never match anything. Check new needles against both
+    # before adding them, the same way "hbo max"/"apple tv" were confirmed
+    # live against the real API rather than assumed.
+    if not name or "channel" in name or "store" in name:
         return None
     for service, needles in SUBSCRIBED.items():
         if any(n in name for n in needles):
@@ -372,13 +387,21 @@ FREE_TIERS = {
 # key here would otherwise be a KeyError at render time over a cosmetic).
 # YouTube gets its own hue rather than its real-world red, since Netflix
 # already owns red in this set and the point of the badge is to read as a
-# distinct, free-to-anyone tier, not to be brand-accurate.
+# distinct, free-to-anyone tier, not to be brand-accurate. Max's real brand
+# is also purple, colliding with Peacock already in this set — given a
+# straight choice between matching a competitor's badge color or reading as
+# a wrong service, that's not really a choice, so Max got pushed to a more
+# saturated indigo-violet clearly apart from Peacock's lighter one. Apple
+# TV+ has no strong signature color in the wild the way the others do;
+# Apple's own recognizable system blue stands in for it.
 SERVICE_COLORS = {
     "Netflix": "#c8342f",
     "Prime Video": "#2c93bd",
     "Hulu": "#1f9d63",
     "Paramount+": "#3b5fd6",
     "Peacock": "#8b5cf6",
+    "Max": "#5822ff",
+    "Apple TV+": "#0071e3",
     "YouTube (free)": "#c9a227",
 }
 TAG_FALLBACK = "#8a8478"

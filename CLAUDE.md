@@ -213,15 +213,28 @@ deleting that one entry from the cache, deliberately, by hand.
 ## Providers
 
 Use `/movie/{id}/watch/providers`, US region, `flatrate` for subscription.
-Subscribed services: Netflix, Hulu, Peacock, Prime Video, Paramount+.
+Subscribed services: Netflix, Hulu, Peacock, Prime Video, Paramount+. Also
+tracked, added 2026-08-11, not yet actually subscribed to: Max, Apple TV+ —
+the owner asked for them ahead of time, "might subscribe in the future," so
+the day a real subscription starts the page reflects it immediately with no
+code change. Until then their titles show as streaming on the page whether
+or not the subscription actually exists yet; that's the accepted tradeoff of
+adding a service preemptively rather than something to fix.
 
-Store *every* US flatrate provider, not just the subscribed five, and filter at
-render time through `common.subscription_for()`. Changing which services are
-subscribed to then costs nothing and needs no re-fetch. The corollary is a rule:
-every read of `availability` goes through `subscription_for()`. TMDB ships
-variants ("Netflix Standard with Ads", "Paramount Plus Essential") that must
-match, and reseller add-ons ("Paramount+ Amazon Channel", "Starz Apple TV
-Channel") that must not — they are separate paid subscriptions, not the service.
+Store *every* US flatrate provider, not just the subscribed seven, and filter
+at render time through `common.subscription_for()`. Changing which services
+are subscribed to then costs nothing and needs no re-fetch. The corollary is a
+rule: every read of `availability` goes through `subscription_for()`. TMDB
+ships variants ("Netflix Standard with Ads", "Paramount Plus Essential") that
+must match, and reseller add-ons ("Paramount+ Amazon Channel", "Starz Apple TV
+Channel") that must not — they are separate paid subscriptions, not the
+service. `subscription_for()`'s exclusion guard also checks for `"store"`, not
+just `"channel"` — added alongside Apple TV+, since TMDB's raw name for that
+subscription is bare `"Apple TV"`, a substring of the unrelated rent/buy
+storefront `"Apple TV Store"` that would otherwise false-match. TMDB's raw
+name for Max is `"HBO Max"`, never bare `"Max"` — that needle would also
+catch `"Cinemax"`. Both raw names were confirmed live against real API
+responses before being hardcoded, not assumed from memory.
 
 **YouTube's free-with-ads tier counts as streaming too**, added 2026-08-10 on
 request. TMDB lists it under the `ads`/`free` kinds, not `flatrate` — a
@@ -370,7 +383,15 @@ title would look new. Only ids present in both polls are compared; an id missing
 from either is unknown, not changed.
 
 There was an "under 100 minutes" section. It was removed on 2026-08-09 — the
-runtime limit was its only reason to exist. Runtime still shows per title.
+runtime limit was its only reason to exist.
+
+**Row cards show genre, not runtime — changed 2026-08-11, owner's call.**
+Runtime originally showed on every card; it's now genre instead ("2024 ·
+Science Fiction, Adventure" rather than "2024 · 167 min"), on every row-card
+variant (streaming and not-currently-streaming alike) and on the "Tonight's
+Pick" hero. Runtime didn't disappear from the page — it moved to the detail
+dialog, which was deliberately left alone by this change and still shows
+year, runtime, and certification together on its own meta line.
 
 A `--kid-awake` equivalent (G/PG via the release-dates endpoint, runtime under
 40m) is planned but not needed until 2027. Don't build it yet. The dialog's
