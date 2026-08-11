@@ -92,10 +92,15 @@ def resolve_one(tmdb, raw, year, logger):
 
 BACKFILL_COLUMNS = (
     "runtime", "poster_path", "overview", "director", "genres", "vote_average", "vote_count",
+    "top_cast", "trailer_key", "status", "release_date",
 )
 
-
 DIRECTOR_JOBS = {"Director", "Co-Director"}
+TOP_CAST_LIMIT = 4
+# Preference order when a title has several videos: an official trailer, any
+# trailer, then a teaser as a last resort. Featurettes/clips are never picked
+# — they're promotional cutdowns, not "should I watch this" material.
+TRAILER_TYPE_PRIORITY = ("Trailer", "Teaser")
 
 
 def _director(details):
@@ -104,19 +109,56 @@ def _director(details):
     return ", ".join(dict.fromkeys(names))  # de-duped, order preserved
 
 
+def _top_cast(details, limit=TOP_CAST_LIMIT):
+    cast = (details.get("credits") or {}).get("cast") or []
+    # .get("order", 999) only substitutes when the key is absent, not when
+    # it's present-but-null; a bare `order: null` from TMDB would sort None
+    # against int and raise TypeError, which isn't a TMDBError — it wouldn't
+    # be caught per-title and would abort the whole run. Same class of
+    # unverified-response-shape assumption already fixed for vote_average.
+    ranked = sorted(
+        (c for c in cast if c.get("name")),
+        key=lambda c: c.get("order") if c.get("order") is not None else 999,
+    )
+    # Dedupe before truncating, not after — a duplicate name shouldn't crowd
+    # out a distinct, correctly-billed name just outside the raw top N.
+    names = list(dict.fromkeys(c["name"] for c in ranked))
+    return ", ".join(names[:limit])
+
+
+def _trailer_key(details):
+    """-> a YouTube video id, or "" if nothing suitable. Only YouTube is
+    considered — that's the only site this project ever links out to."""
+    videos = (details.get("videos") or {}).get("results") or []
+    youtube = [v for v in videos if v.get("site") == "YouTube" and v.get("key")]
+    for wanted in TRAILER_TYPE_PRIORITY:
+        matches = [v for v in youtube if v.get("type") == wanted]
+        # An official one first, but an unofficial trailer still beats a teaser.
+        matches.sort(key=lambda v: not v.get("official", False))
+        if matches:
+            return matches[0]["key"]
+    return ""
+
+
 def upsert_movie(conn, tmdb, tmdb_id, logger):
     """Fill in the movies row. Details are fetched once per id — except that a
-    row missing any of BACKFILL_COLUMNS (grows as fields get added; poster_path
-    2026-08-10, overview/director/genres/vote_average/vote_count 2026-08-10
-    later the same day) gets one more fetch to backfill what's missing.
+    row missing any of BACKFILL_COLUMNS (grows as fields get added, all on
+    2026-08-10: poster_path, then overview/director/genres/vote_average/
+    vote_count, then top_cast/trailer_key/status/release_date) gets one more
+    fetch to backfill what's missing.
 
-    overview/director/genres are stored as "" rather than left NULL when TMDB
-    genuinely has nothing, specifically so the short-circuit can tell "fetched,
-    empty" from "never fetched" and doesn't re-request forever. vote_average/
-    vote_count get no such treatment — TMDB always returns them as numbers (0
-    for an unrated title), so a real fetch never leaves them NULL. poster_path
-    is the one field that can legitimately stay NULL after a real fetch; a
-    title TMDB has no poster for re-fetches every run. Accepted, rare.
+    overview/director/genres/top_cast/status are stored as "" rather than left
+    NULL when TMDB genuinely has nothing, specifically so the short-circuit can
+    tell "fetched, empty" from "never fetched" and doesn't re-request forever.
+    trailer_key gets the same treatment for the same reason — plenty of older
+    or obscure titles genuinely have no YouTube trailer in TMDB's data.
+    vote_average/vote_count get no such treatment — TMDB always returns them
+    as numbers (0 for an unrated title), so a real fetch never leaves them
+    NULL. release_date is stored even when empty (unreleased titles sometimes
+    carry one, sometimes don't) since an empty string there is itself
+    meaningful, not a sign the fetch never happened. poster_path is the one
+    field that can legitimately stay NULL after a real fetch; a title TMDB has
+    no poster for re-fetches every run. Accepted, rare.
     """
     row = conn.execute(
         f"SELECT {', '.join(BACKFILL_COLUMNS)} FROM movies WHERE tmdb_id = ?", (tmdb_id,)
@@ -133,13 +175,16 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
     genres = ", ".join(g["name"] for g in details.get("genres") or [] if g.get("name"))
     conn.execute(
         "INSERT INTO movies (tmdb_id, title, year, runtime, poster_path, "
-        "overview, director, genres, vote_average, vote_count) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "overview, director, genres, vote_average, vote_count, "
+        "top_cast, trailer_key, status, release_date) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(tmdb_id) DO UPDATE SET title = excluded.title, "
         "year = excluded.year, runtime = excluded.runtime, "
         "poster_path = excluded.poster_path, overview = excluded.overview, "
         "director = excluded.director, genres = excluded.genres, "
-        "vote_average = excluded.vote_average, vote_count = excluded.vote_count",
+        "vote_average = excluded.vote_average, vote_count = excluded.vote_count, "
+        "top_cast = excluded.top_cast, trailer_key = excluded.trailer_key, "
+        "status = excluded.status, release_date = excluded.release_date",
         (
             tmdb_id,
             details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
@@ -157,6 +202,10 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
             # fields above.
             details.get("vote_average") if details.get("vote_average") is not None else 0.0,
             details.get("vote_count") if details.get("vote_count") is not None else 0,
+            _top_cast(details),
+            _trailer_key(details),
+            details.get("status") or "",
+            date,
         ),
     )
     return True

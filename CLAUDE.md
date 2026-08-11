@@ -85,36 +85,49 @@ search without it.
 
 ```sql
 movies(tmdb_id PK, title, year, runtime, poster_path,
-       overview, director, genres, vote_average, vote_count)
+       overview, director, genres, vote_average, vote_count,
+       top_cast, trailer_key, status, release_date)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 ```
 
-`poster_path` was added 2026-08-10, after `movies` already had 67 rows;
-`overview`/`director`/`genres`/`vote_average`/`vote_count` followed the same
-day for the detail dialog. `CREATE TABLE IF NOT EXISTS` can't add a column to
-a table that already exists, so `common.connect()` runs a small migration
-after the schema script — `PRAGMA table_info`, then `ALTER TABLE ... ADD
-COLUMN` for whatever's missing. Any new column joins this way; the schema
-script alone only ever handles a fresh db.
+All nine non-original columns were added 2026-08-10, after `movies` already
+had 67 rows, in three passes for the detail dialog: `poster_path` first, then
+`overview`/`director`/`genres`/`vote_average`/`vote_count`, then `top_cast`/
+`trailer_key`/`status`/`release_date`. `CREATE TABLE IF NOT EXISTS` can't add
+a column to a table that already exists, so `common.connect()` runs a small
+migration after the schema script — `PRAGMA table_info`, then `ALTER TABLE
+... ADD COLUMN` for whatever's missing. Any new column joins this way; the
+schema script alone only ever handles a fresh db. `cast` was avoided as a
+column name — it's a reserved SQL keyword — in favor of `top_cast`.
 
 Pre-existing rows are backfilled without a separate script: `upsert_movie()`'s
 short-circuit (skip re-fetching TMDB details for a row already filled in) now
 requires every column in `resolver.BACKFILL_COLUMNS` to be non-NULL, not just
 `runtime`. The very next resolver run re-fetches every old row once and fills
-in whatever's missing. `overview`/`director`/`genres` are stored as `""`
+in whatever's missing — confirmed three times now, 70/70 each time. `overview`/
+`director`/`genres`/`top_cast`/`status`/`trailer_key` are stored as `""`
 rather than left NULL when TMDB genuinely has nothing, specifically so the
 short-circuit can tell "fetched, empty" from "never fetched" — without that,
-a title with no listed director would re-fetch forever. `vote_average`/
-`vote_count` need no such treatment; TMDB always returns them as numbers.
+a title with no listed director (or, for `trailer_key`, plenty of older or
+obscure titles with no YouTube trailer in TMDB's data) would re-fetch forever.
+`vote_average`/`vote_count` default to `0.0`/`0` instead of staying raw for
+the same reason — "TMDB always returns them as numbers" turned out to be an
+assumption about response shape, not a guarantee, and trusting it blindly
+risked the identical failure mode. `release_date` is stored even when empty,
+since empty is itself meaningful there, not a sign the fetch never happened.
 `poster_path` is the one column that can legitimately stay NULL after a real
 fetch — a title TMDB has no poster for keeps re-fetching every run, accepted,
 same tradeoff already made for `runtime IS NULL`, and rare enough not to
-matter. `director` comes from `credits.crew` via `append_to_response=credits`
-on the existing `/movie/{id}` call (`common.TMDB.movie()`) — one extra query
-param, not a second API call per movie.
+matter. `director`/`top_cast`/`trailer_key` come from `credits`/`videos` via
+`append_to_response=credits,videos` on the existing `/movie/{id}` call
+(`common.TMDB.movie()`) — two extra query params, not two more API calls per
+movie. Trailer selection prefers an official `Trailer`, then any `Trailer`,
+then a `Teaser` as a last resort, YouTube only — see `resolver._trailer_key()`
+for why the full video list has to be scanned rather than assuming a trailer
+comes first (it doesn't, reliably).
 
 `favorites` and `watchlist` are separate tables sharing `movies`.
 
@@ -238,13 +251,31 @@ in the page's HTML, hidden; opening it needs only a visibility toggle, no
 recomputation. Built 2026-08-10, the same day as the clarification: a CSS
 `:target` toggle in `render.py`'s `render_dialogs()`. Tapping a row (every
 row, streaming or hidden) opens a bottom sheet with a larger poster, genre and
-director, TMDB's user score and vote count, the full service list or a "not
-currently streaming" tag, a synopsis, and an outbound link to the title's
-TMDB page for cast, trailer, and rental prices the free API doesn't expose
-(same day, same schema addition — see `movies.overview`/`director`/`genres`/
-`vote_average`/`vote_count` in Schema). Every field a title might legitimately
-be missing (mid-backfill, or TMDB genuinely has nothing) degrades to just not
-showing that line, not a blank or a crash.
+director, top-billed cast, TMDB's user score and vote count, a synopsis, and
+a closing line with a trailer link (when TMDB has one) alongside an outbound
+link to the title's TMDB page for full cast, reviews, and rental prices the
+free API doesn't expose (same day, same schema additions — see Schema).
+Every field a title might legitimately be missing (mid-backfill, or TMDB
+genuinely has nothing) degrades to just not showing that line, not a blank
+or a crash.
+
+The tag row shows the real service list, or "not currently streaming" — except
+for a title that hasn't released yet, which gets "Releases {date}" instead
+(`render.release_badge()`). "Not currently streaming" is technically true but
+misleading for something that was never eligible to stream at all. As of
+2026-08-10 nothing on either list is actually still unreleased, so this sits
+dormant; it activates the next time a genuinely upcoming title is added by
+hand.
+
+`release_badge()` compares `release_date` against *today's real date*, fresh,
+every render — not `status`. `status`/`release_date` are fetched once and
+frozen like everything else in `BACKFILL_COLUMNS`; trusting a frozen `status`
+string would mean a title backfilled as "Post Production" keeps showing a
+stale "Releases {date-in-the-past}" badge forever after it actually comes out
+and starts streaming, permanently hiding real, correctly-computed availability
+— caught in review before this ever shipped. Comparing the date instead
+self-heals the day the calendar catches up, with no re-fetch and nothing to
+remember to invalidate.
 
 Two accepted tradeoffs of doing this with no JavaScript, worth knowing rather
 than rediscovering:

@@ -250,10 +250,12 @@ class TMDB:
         )
 
     def movie(self, tmdb_id):
-        # append_to_response bundles credits into this same request — the
-        # director comes from credits.crew, and without this it would take a
-        # second call per movie just to ask "who directed it".
-        return self.get(f"/movie/{int(tmdb_id)}", language="en-US", append_to_response="credits")
+        # append_to_response bundles credits and videos into this same
+        # request — director/cast come from credits, the trailer from
+        # videos. Without this it would take two more calls per movie.
+        return self.get(
+            f"/movie/{int(tmdb_id)}", language="en-US", append_to_response="credits,videos"
+        )
 
     def watch_providers(self, tmdb_id):
         return self.get(f"/movie/{int(tmdb_id)}/watch/providers")
@@ -280,7 +282,11 @@ CREATE TABLE IF NOT EXISTS movies (
     director      TEXT,
     genres        TEXT,
     vote_average  REAL,
-    vote_count    INTEGER
+    vote_count    INTEGER,
+    top_cast      TEXT,
+    trailer_key   TEXT,
+    status        TEXT,
+    release_date  TEXT
 );
 CREATE TABLE IF NOT EXISTS favorites (
     tmdb_id INTEGER PRIMARY KEY REFERENCES movies(tmdb_id)
@@ -407,6 +413,10 @@ def _migrate(conn):
         "genres": "TEXT",
         "vote_average": "REAL",
         "vote_count": "INTEGER",
+        "top_cast": "TEXT",
+        "trailer_key": "TEXT",
+        "status": "TEXT",
+        "release_date": "TEXT",
     }
     changed = False
     for name, sql_type in additions.items():

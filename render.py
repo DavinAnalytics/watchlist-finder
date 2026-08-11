@@ -22,6 +22,7 @@ import datetime as dt
 import html
 import string
 import sys
+import urllib.parse
 
 import common
 
@@ -87,7 +88,8 @@ def movie_rows(conn):
         r["tmdb_id"]: r
         for r in conn.execute(
             "SELECT tmdb_id, title, year, runtime, poster_path, "
-            "overview, director, genres, vote_average, vote_count FROM movies"
+            "overview, director, genres, vote_average, vote_count, "
+            "top_cast, trailer_key, status, release_date FROM movies"
         )
     }
 
@@ -171,6 +173,39 @@ def render_list(items, movies, empty_text, *, variant="on"):
     return "\n".join(out)
 
 
+def release_badge(status, release_date):
+    """-> an HTML tag for a title that hasn't released yet, or None.
+
+    None means "say nothing here, fall back to the normal streaming/not-
+    streaming tag" — which covers a released title, one with no usable date,
+    and (deliberately) `status` alone. `status`/`release_date` are fetched
+    once, like everything else in BACKFILL_COLUMNS, and never touched again —
+    sync_providers.py doesn't refresh them either. Trusting a frozen `status`
+    string forever would mean a title that was "Post Production" the day it
+    got backfilled shows a stale "Releases {date-in-the-past}" badge forever
+    after it actually comes out, permanently hiding real streaming
+    availability that's sitting right there computed and correct — the exact
+    "wrong result that looks right" failure this project is built against.
+    Comparing the *date* against today, freshly, on every render, self-heals
+    the moment the calendar catches up — no re-fetch, no cache to invalidate,
+    nothing to remember.
+    """
+    if not release_date:
+        # No date at all: status is the only signal, but a stale non-dated
+        # "not released" claim can't silently outlive its truth the way a
+        # concrete past date could, so trusting it here is safe indefinitely.
+        if status in ("", "Released"):
+            return None
+        return '<span class="tag tag-upcoming">Not yet released</span>'
+    try:
+        when = dt.date.fromisoformat(release_date)
+    except (ValueError, TypeError):
+        return None
+    if when <= dt.date.today():
+        return None
+    return f'<span class="tag tag-upcoming">Releases {esc(when.strftime("%b %-d, %Y"))}</span>'
+
+
 def render_dialogs(items, movies):
     """One collapsed detail overlay per unique tmdb_id, revealed by CSS
     :target when its row is tapped. `items`: {tmdb_id: [services]}, already
@@ -205,6 +240,10 @@ def render_dialogs(items, movies):
         overview = (movie["overview"] if movie else "") or ""
         director = (movie["director"] if movie else "") or ""
         genres = (movie["genres"] if movie else "") or ""
+        top_cast = (movie["top_cast"] if movie else "") or ""
+        trailer_key = (movie["trailer_key"] if movie else "") or ""
+        status = (movie["status"] if movie else "") or ""
+        release_date = (movie["release_date"] if movie else "") or ""
         vote_average = movie["vote_average"] if movie else None
         vote_count = movie["vote_count"] if movie else None
 
@@ -216,6 +255,7 @@ def render_dialogs(items, movies):
         if director:
             byline.append(f"Directed by {esc(director)}")
         byline_html = f'<div class="card-meta">{" · ".join(byline)}</div>' if byline else ""
+        cast_html = f'<div class="card-meta">Starring {esc(top_cast)}</div>' if top_cast else ""
 
         score_html = ""
         if vote_average is not None and vote_count:
@@ -225,6 +265,21 @@ def render_dialogs(items, movies):
             )
 
         overview_html = f'<p class="dialog-body">{esc(overview)}</p>' if overview else ""
+
+        # An unreleased title gets its own badge instead of the usual
+        # streaming/not-streaming tag — "not currently streaming" is true but
+        # misleading for something that was never eligible to stream at all.
+        tags_html = release_badge(status, release_date) or tag_chips(services)
+
+        trailer_html = ""
+        if trailer_key:
+            # quote(), not just esc(): a stray "&" or "#" in a malformed key
+            # would be read as query/fragment syntax by the browser and link
+            # to the wrong video, quietly, rather than fail loudly. esc()
+            # alone only stops it from breaking out of the href attribute.
+            v = urllib.parse.quote(trailer_key, safe="")
+            trailer_url = esc(f"https://www.youtube.com/watch?v={v}")
+            trailer_html = f'<a href="{trailer_url}">▶ Watch trailer</a> · '
 
         poster = poster_html(
             poster_path,
@@ -243,11 +298,12 @@ def render_dialogs(items, movies):
             f'<a href="#_close" class="dialog-close" aria-label="Close">✕</a>'
             f'<div class="dialog-head">{poster}'
             f'<div><div id="m{tmdb_id}-title" class="dialog-title">{esc(title)}</div>'
-            f'<div class="card-meta">{meta}</div>{byline_html}{score_html}</div></div>'
-            f'<div class="tag-row">{tag_chips(services)}</div>'
+            f'<div class="card-meta">{meta}</div>{byline_html}{cast_html}{score_html}'
+            f"</div></div>"
+            f'<div class="tag-row">{tags_html}</div>'
             f"{overview_html}"
-            f'<p class="dialog-link"><a href="{esc(tmdb_url)}">'
-            f"Cast, trailer, and rental prices on TMDB →</a></p>"
+            f'<p class="dialog-link">{trailer_html}<a href="{esc(tmdb_url)}">'
+            f"Full cast, reviews, and rental prices on TMDB →</a></p>"
             f"</div></div>"
         )
     return "\n".join(out)
