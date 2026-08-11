@@ -92,8 +92,16 @@ def resolve_one(tmdb, raw, year, logger):
 
 BACKFILL_COLUMNS = (
     "runtime", "poster_path", "overview", "director", "genres", "vote_average", "vote_count",
-    "top_cast", "trailer_key", "status", "release_date",
+    "top_cast", "trailer_key", "status", "release_date", "certification",
 )
+ALL_COLUMNS = ("tmdb_id", "title", "year") + BACKFILL_COLUMNS
+
+# Statuses a title will never move on from — safe to stop re-fetching for.
+# Everything else ("In Production", "Post Production", "Planned", "Rumored")
+# can still become "Released", so a row in one of those states keeps
+# re-fetching every run until it settles. "" means TMDB never gave a status
+# at all, which release_badge() already treats as "assume released".
+SETTLED_STATUSES = {"", "Released", "Canceled"}
 
 DIRECTOR_JOBS = {"Director", "Co-Director"}
 TOP_CAST_LIMIT = 4
@@ -140,31 +148,72 @@ def _trailer_key(details):
     return ""
 
 
-def upsert_movie(conn, tmdb, tmdb_id, logger):
-    """Fill in the movies row. Details are fetched once per id — except that a
-    row missing any of BACKFILL_COLUMNS (grows as fields get added, all on
-    2026-08-10: poster_path, then overview/director/genres/vote_average/
-    vote_count, then top_cast/trailer_key/status/release_date) gets one more
-    fetch to backfill what's missing.
+def _certification(details):
+    """-> a US content rating ("R", "PG-13", ...) or "" if TMDB has none.
 
-    overview/director/genres/top_cast/status are stored as "" rather than left
-    NULL when TMDB genuinely has nothing, specifically so the short-circuit can
-    tell "fetched, empty" from "never fetched" and doesn't re-request forever.
-    trailer_key gets the same treatment for the same reason — plenty of older
-    or obscure titles genuinely have no YouTube trailer in TMDB's data.
-    vote_average/vote_count get no such treatment — TMDB always returns them
-    as numbers (0 for an unrated title), so a real fetch never leaves them
-    NULL. release_date is stored even when empty (unreleased titles sometimes
-    carry one, sometimes don't) since an empty string there is itself
-    meaningful, not a sign the fetch never happened. poster_path is the one
-    field that can legitimately stay NULL after a real fetch; a title TMDB has
-    no poster for re-fetches every run. Accepted, rare.
+    TMDB carries one release_dates entry per release event (festival,
+    premiere, theatrical, digital, physical), and the certification isn't
+    reliably attached to any particular one — some carry it, some don't, with
+    no consistent pattern across titles. Take the first non-empty value found,
+    in whatever order TMDB lists them.
+    """
+    results = (details.get("release_dates") or {}).get("results") or []
+    us = next((r for r in results if r.get("iso_3166_1") == "US"), None)
+    if not us:
+        return ""
+    for entry in us.get("release_dates") or []:
+        cert = (entry.get("certification") or "").strip()
+        if cert:
+            return cert
+    return ""
+
+
+def upsert_movie(conn, tmdb, tmdb_id, logger):
+    """Fill in the movies row. Details are fetched once per id and then left
+    alone — except that a row missing any of BACKFILL_COLUMNS (grows as
+    fields get added, all on 2026-08-10/11: poster_path, then overview/
+    director/genres/vote_average/vote_count, then top_cast/trailer_key/
+    status/release_date, then certification) gets one more fetch to backfill
+    what's missing, and except that a row whose status isn't in
+    SETTLED_STATUSES keeps re-fetching every run regardless of what's already
+    filled in — see SETTLED_STATUSES for why status/release_date can't join
+    the usual "fetch once" treatment the way everything else here does.
+
+    overview/director/genres/top_cast/status/certification are stored as ""
+    rather than left NULL when TMDB genuinely has nothing, specifically so the
+    short-circuit can tell "fetched, empty" from "never fetched" and doesn't
+    re-request forever. trailer_key gets the same treatment for the same
+    reason — plenty of older or obscure titles genuinely have no YouTube
+    trailer in TMDB's data. vote_average/vote_count get no such treatment —
+    TMDB always returns them as numbers (0 for an unrated title), so a real
+    fetch never leaves them NULL. release_date is stored even when empty
+    (unreleased titles sometimes carry one, sometimes don't) since an empty
+    string there is itself meaningful, not a sign the fetch never happened.
+    poster_path is the one field that can legitimately stay NULL after a real
+    fetch; a title TMDB has no poster for re-fetches every run. Accepted, rare.
     """
     row = conn.execute(
         f"SELECT {', '.join(BACKFILL_COLUMNS)} FROM movies WHERE tmdb_id = ?", (tmdb_id,)
     ).fetchone()
-    if row is not None and all(row[c] is not None for c in BACKFILL_COLUMNS):
+    if (
+        row is not None
+        and all(row[c] is not None for c in BACKFILL_COLUMNS)
+        and row["status"] in SETTLED_STATUSES
+    ):
         return True
+    # Falls through and re-fetches everything otherwise — including when
+    # every other column is already filled. status/release_date aren't a
+    # fetch-quality problem the way an empty overview is; they're a real
+    # fact that changes over time for exactly the titles this whole
+    # unreleased-badge feature exists for. Freezing them the same way as
+    # everything else meant a title backfilled while still "Post Production"
+    # (or one TMDB hadn't assigned a release_date to yet at all) would keep
+    # showing "not yet released" forever, even after it actually released and
+    # started streaming — permanently hiding real availability behind a
+    # snapshot taken before the fact was settled. Caught in review before
+    # this shipped; release_badge()'s "compares the date fresh every render"
+    # fix from earlier only covered the case where a release_date existed at
+    # all, not this one.
 
     details = tmdb.movie(tmdb_id)
     if not details:
@@ -173,40 +222,46 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
 
     date = (details.get("release_date") or "")
     genres = ", ".join(g["name"] for g in details.get("genres") or [] if g.get("name"))
-    conn.execute(
-        "INSERT INTO movies (tmdb_id, title, year, runtime, poster_path, "
-        "overview, director, genres, vote_average, vote_count, "
-        "top_cast, trailer_key, status, release_date) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(tmdb_id) DO UPDATE SET title = excluded.title, "
-        "year = excluded.year, runtime = excluded.runtime, "
-        "poster_path = excluded.poster_path, overview = excluded.overview, "
-        "director = excluded.director, genres = excluded.genres, "
-        "vote_average = excluded.vote_average, vote_count = excluded.vote_count, "
-        "top_cast = excluded.top_cast, trailer_key = excluded.trailer_key, "
-        "status = excluded.status, release_date = excluded.release_date",
-        (
-            tmdb_id,
-            details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
-            int(date[:4]) if date[:4].isdigit() else None,
-            details.get("runtime"),
-            details.get("poster_path"),
-            details.get("overview") or "",
-            _director(details),
-            genres,
-            # Not left raw: "TMDB always returns these as numbers" is an
-            # assumption about response shape, not a guarantee. If a response
-            # ever omits them, a raw None here would never satisfy
-            # BACKFILL_COLUMNS and the row would re-fetch forever — same
-            # failure this 0/0.0 default already avoids for the three string
-            # fields above.
-            details.get("vote_average") if details.get("vote_average") is not None else 0.0,
-            details.get("vote_count") if details.get("vote_count") is not None else 0,
-            _top_cast(details),
-            _trailer_key(details),
-            details.get("status") or "",
-            date,
+    values = {
+        "tmdb_id": tmdb_id,
+        "title": details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
+        "year": int(date[:4]) if date[:4].isdigit() else None,
+        "runtime": details.get("runtime"),
+        "poster_path": details.get("poster_path"),
+        "overview": details.get("overview") or "",
+        "director": _director(details),
+        "genres": genres,
+        # Not left raw: "TMDB always returns these as numbers" is an
+        # assumption about response shape, not a guarantee. If a response
+        # ever omits them, a raw None here would never satisfy
+        # BACKFILL_COLUMNS and the row would re-fetch forever — same failure
+        # this 0/0.0 default already avoids for the string-typed fields.
+        "vote_average": (
+            details.get("vote_average") if details.get("vote_average") is not None else 0.0
         ),
+        "vote_count": details.get("vote_count") if details.get("vote_count") is not None else 0,
+        "top_cast": _top_cast(details),
+        "trailer_key": _trailer_key(details),
+        "status": details.get("status") or "",
+        "release_date": date,
+        "certification": _certification(details),
+    }
+
+    # Built from ALL_COLUMNS rather than three hand-written, hand-counted SQL
+    # fragments: a column list, a VALUES placeholder count, and an ON
+    # CONFLICT SET clause, kept in sync purely by careful editing. That
+    # pattern already needed fixing once this session — a miscounted
+    # positional tuple would silently shift values into the wrong columns
+    # with no error, exactly the kind of quiet-wrong-data failure this
+    # project is built against. Adding a column now only means adding one key
+    # to `values` above and one line to SCHEMA/_migrate/BACKFILL_COLUMNS.
+    cols = ", ".join(ALL_COLUMNS)
+    placeholders = ", ".join("?" * len(ALL_COLUMNS))
+    updates = ", ".join(f"{c} = excluded.{c}" for c in ALL_COLUMNS if c != "tmdb_id")
+    conn.execute(
+        f"INSERT INTO movies ({cols}) VALUES ({placeholders}) "
+        f"ON CONFLICT(tmdb_id) DO UPDATE SET {updates}",
+        tuple(values[c] for c in ALL_COLUMNS),
     )
     return True
 

@@ -20,6 +20,8 @@ Two rules this file exists to honour:
 import argparse
 import datetime as dt
 import html
+import random
+import re
 import string
 import sys
 import urllib.parse
@@ -83,13 +85,33 @@ def snapshot(conn, on, table="watchlist"):
     return {k: sorted(v) for k, v in snap.items()}
 
 
+def rentable_snapshot(conn, on):
+    """-> {tmdb_id: sorted[provider name]} for rent/buy availability on `on`.
+
+    No subscription_for()/free_tier_for() filtering, unlike snapshot(): every
+    rent/buy storefront TMDB lists is legitimate to show as-is, there's no
+    reseller-channel noise in this bucket the way there is for flatrate/ads.
+    No LEFT JOIN against poll_log needed either — a rent/buy row only exists
+    because that id was polled that day, so there's nothing to distinguish.
+    """
+    rows = conn.execute(
+        "SELECT tmdb_id, provider FROM availability "
+        "WHERE seen_on = ? AND kind IN ('rent', 'buy')",
+        (on,),
+    ).fetchall()
+    snap = {}
+    for row in rows:
+        snap.setdefault(row["tmdb_id"], set()).add(row["provider"])
+    return {k: sorted(v) for k, v in snap.items()}
+
+
 def movie_rows(conn):
     return {
         r["tmdb_id"]: r
         for r in conn.execute(
             "SELECT tmdb_id, title, year, runtime, poster_path, "
             "overview, director, genres, vote_average, vote_count, "
-            "top_cast, trailer_key, status, release_date FROM movies"
+            "top_cast, trailer_key, status, release_date, certification FROM movies"
         )
     }
 
@@ -123,6 +145,42 @@ def tag_chips(services):
             f'<span class="tag-dot"></span>{esc(s)}</span>'
         )
     return "".join(chips)
+
+
+def _slug(label):
+    """-> a lowercase, hyphenated ASCII token safe for an HTML id/attribute."""
+    return re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")
+
+
+def render_filter_radios():
+    """Hidden radio inputs driving the service filter — see the CSS comment
+    in template.html for the mechanism. These have to sit as a previous
+    sibling of <main>, not inside it: the "~" combinator only reaches
+    forward across siblings, and <label for=...> works regardless of where
+    in the document the label itself lives, so the visible pills can stay
+    inside <main> while these stay outside it, out of the way visually.
+    """
+    ids = ['<input type="radio" name="filter" id="filter-all" class="filter-radio" checked>']
+    for label in common.SERVICE_COLORS:
+        ids.append(
+            f'<input type="radio" name="filter" id="filter-{_slug(label)}" class="filter-radio">'
+        )
+    return "\n".join(ids)
+
+
+def render_filter_bar():
+    """The visible pill row. One pill per common.SERVICE_COLORS entry — the
+    same six labels a tag can ever actually show, so there's never a filter
+    option that couldn't possibly match anything.
+    """
+    pills = ['<label class="pill" for="filter-all">All</label>']
+    for label in common.SERVICE_COLORS:
+        color = common.SERVICE_COLORS[label]
+        pills.append(
+            f'<label class="pill" for="filter-{_slug(label)}" '
+            f'style="--tag-color:{esc(color)}">{esc(label)}</label>'
+        )
+    return f'<div class="filter-bar">{"".join(pills)}</div>'
 
 
 def render_list(items, movies, empty_text, *, variant="on"):
@@ -161,11 +219,17 @@ def render_list(items, movies, empty_text, *, variant="on"):
         poster = poster_html(poster_path) if on else ""
 
         tags_html = ""
+        services_attr = ""
         if on and services:
             tags_html = f'<div class="tag-row">{tag_chips(services)}</div>'
+            # Drives the CSS-only service filter — see render_filter_radios().
+            # Off-variant cards never get this attribute; they're not part of
+            # what the filter touches (see template.html's filter-bar CSS).
+            slugs = " ".join(_slug(s) for s in services)
+            services_attr = f' data-services="{esc(slugs)}"'
 
         out.append(
-            f'<li><a class="{card_class}" href="#m{tmdb_id}">{poster}'
+            f'<li><a class="{card_class}" href="#m{tmdb_id}"{services_attr}>{poster}'
             f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
             f"{meta_html}{tags_html}</div></a></li>"
         )
@@ -206,7 +270,7 @@ def release_badge(status, release_date):
     return f'<span class="tag tag-upcoming">Releases {esc(when.strftime("%b %-d, %Y"))}</span>'
 
 
-def render_dialogs(items, movies):
+def render_dialogs(items, movies, rentable=None):
     """One collapsed detail overlay per unique tmdb_id, revealed by CSS
     :target when its row is tapped. `items`: {tmdb_id: [services]}, already
     deduped by the caller — dict keys can't collide by construction, so a
@@ -219,6 +283,11 @@ def render_dialogs(items, movies):
     actually mean "not a watchlist member" rather than just "wasn't polled".
     Touching poll_log's schema or how ids are polled should come back here.
 
+    `rentable`: {tmdb_id: [provider names]} from rentable_snapshot(), shown
+    only for a title that's released and not currently streaming anywhere —
+    a title already streaming doesn't need "also rentable on X", and an
+    unreleased title gets release_badge() instead, never both.
+
     The close links point at "#_close" rather than a bare "#": per the
     fragment-navigation spec, an empty fragment means "scroll to top of
     document", which would yank a long page back up every time a dialog
@@ -226,6 +295,7 @@ def render_dialogs(items, movies):
     """
     if not items:
         return ""
+    rentable = rentable or {}
 
     out = []
     for tmdb_id, services in sorted(items.items()):
@@ -244,10 +314,15 @@ def render_dialogs(items, movies):
         trailer_key = (movie["trailer_key"] if movie else "") or ""
         status = (movie["status"] if movie else "") or ""
         release_date = (movie["release_date"] if movie else "") or ""
+        certification = (movie["certification"] if movie else "") or ""
         vote_average = movie["vote_average"] if movie else None
         vote_count = movie["vote_count"] if movie else None
 
-        meta = " · ".join(esc(v) for v in (year, f"{runtime} min" if runtime else None) if v)
+        meta = " · ".join(
+            esc(v)
+            for v in (year, f"{runtime} min" if runtime else None, certification or None)
+            if v
+        )
 
         byline = []
         if genres:
@@ -269,7 +344,20 @@ def render_dialogs(items, movies):
         # An unreleased title gets its own badge instead of the usual
         # streaming/not-streaming tag — "not currently streaming" is true but
         # misleading for something that was never eligible to stream at all.
-        tags_html = release_badge(status, release_date) or tag_chips(services)
+        upcoming = release_badge(status, release_date)
+        tags_html = upcoming or tag_chips(services)
+
+        # Only for a released title with nothing streaming: already-streaming
+        # doesn't need an alternative, and an unreleased title isn't rentable
+        # yet either regardless of what TMDB's rent/buy list might still show
+        # from a prior release window (re-releases, festival runs).
+        rentable_html = ""
+        if not upcoming and not services:
+            providers = rentable.get(tmdb_id) or []
+            if providers:
+                rentable_html = (
+                    f'<div class="card-meta">Rentable on {esc(", ".join(providers))}</div>'
+                )
 
         trailer_html = ""
         if trailer_key:
@@ -301,6 +389,7 @@ def render_dialogs(items, movies):
             f'<div class="card-meta">{meta}</div>{byline_html}{cast_html}{score_html}'
             f"</div></div>"
             f'<div class="tag-row">{tags_html}</div>'
+            f"{rentable_html}"
             f"{overview_html}"
             f'<p class="dialog-link">{trailer_html}<a href="{esc(tmdb_url)}">'
             f"Full cast, reviews, and rental prices on TMDB →</a></p>"
@@ -322,6 +411,57 @@ def render_details(summary, items, movies):
         f"<summary>{esc(summary)} ({len(items)})</summary>\n"
         f"{render_list(items, movies, '', variant='off')}\n"
         f"</details>"
+    )
+
+
+def _truncate(text, limit=140):
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + "…"
+
+
+def tonight_pick(streaming, new, latest):
+    """-> a featured tmdb_id, or None if nothing is streaming.
+
+    Seeded by the poll date, not truly random: stable across repeat renders
+    on the same day (this project gets re-run by hand plenty during
+    development, and a pick that changes every run would be a strange kind
+    of not-broken-but-useless). Prefers `new` over `streaming` when there is
+    a `new` title — something that just became available is more worth
+    surfacing than an arbitrary pick from the whole list.
+    """
+    pool = new if new else streaming
+    if not pool:
+        return None
+    return random.Random(f"tonight:{latest}").choice(sorted(pool))
+
+
+def render_hero(tmdb_id, services, movies):
+    """-> the "Tonight's Pick" hero card, or "" if there's nothing to feature."""
+    movie = movies.get(tmdb_id) if tmdb_id is not None else None
+    if not movie:
+        return ""
+
+    title = movie["title"]
+    year = movie["year"]
+    runtime = movie["runtime"]
+    overview = movie["overview"] or ""
+
+    meta = " · ".join(esc(v) for v in (year, f"{runtime} min" if runtime else None) if v)
+    poster = poster_html(
+        movie["poster_path"], css_class="poster hero-poster", width=72, height=108
+    )
+    tag_row = f'<div class="tag-row">{tag_chips(services)}</div>' if services else ""
+    blurb = f'<p class="hero-blurb">{esc(_truncate(overview))}</p>' if overview else ""
+
+    return (
+        f'<a href="#m{tmdb_id}" class="hero-card elev-lg">'
+        f'<div class="hero-kicker">Tonight’s pick</div>'
+        f'<div class="hero-body">{poster}'
+        f'<div class="row-info"><div class="hero-title">{esc(title)}</div>'
+        f"<div class=\"card-meta\">{meta}</div>{tag_row}{blurb}</div></div>"
+        f"</a>"
     )
 
 
@@ -366,6 +506,7 @@ def main(argv=None):
         favorites_size = conn.execute("SELECT COUNT(*) AS n FROM favorites").fetchone()["n"]
         today = snapshot(conn, latest)
         yesterday = snapshot(conn, prev) if prev else {}
+        rentable = rentable_snapshot(conn, latest)
 
         streaming = {i: s for i, s in today.items() if s}
 
@@ -410,6 +551,9 @@ def main(argv=None):
         for group in (streaming, watch_hidden, fav_streaming, fav_hidden):
             dialog_items.update(group)
 
+        pick_id = tonight_pick(streaming, new, latest)
+        hero_html = render_hero(pick_id, streaming.get(pick_id, []), movies)
+
         key = sort_key(movies)
         prev_label = prev or "the last run"
         banners = []
@@ -440,6 +584,9 @@ def main(argv=None):
                 f"{dt.datetime.now().strftime('%a %-d %b, %H:%M')} · data from {latest}"
             ),
             stale_banner=banner,
+            hero=hero_html,
+            filter_radios=render_filter_radios(),
+            filter_bar=render_filter_bar(),
             count_streaming=len(streaming),
             count_new=len(new),
             count_gone=len(gone),
@@ -466,7 +613,7 @@ def main(argv=None):
             footer=esc(
                 f"{len(today)} of {watchlist_size} watchlist titles polled on {latest}"
             ),
-            dialogs=render_dialogs(dialog_items, movies),
+            dialogs=render_dialogs(dialog_items, movies, rentable),
         )
     finally:
         conn.close()

@@ -250,11 +250,14 @@ class TMDB:
         )
 
     def movie(self, tmdb_id):
-        # append_to_response bundles credits and videos into this same
-        # request — director/cast come from credits, the trailer from
-        # videos. Without this it would take two more calls per movie.
+        # append_to_response bundles credits, videos and release_dates into
+        # this same request — director/cast from credits, the trailer from
+        # videos, the US certification from release_dates. Without this it
+        # would take three more calls per movie.
         return self.get(
-            f"/movie/{int(tmdb_id)}", language="en-US", append_to_response="credits,videos"
+            f"/movie/{int(tmdb_id)}",
+            language="en-US",
+            append_to_response="credits,videos,release_dates",
         )
 
     def watch_providers(self, tmdb_id):
@@ -286,7 +289,8 @@ CREATE TABLE IF NOT EXISTS movies (
     top_cast      TEXT,
     trailer_key   TEXT,
     status        TEXT,
-    release_date  TEXT
+    release_date  TEXT,
+    certification TEXT
 );
 CREATE TABLE IF NOT EXISTS favorites (
     tmdb_id INTEGER PRIMARY KEY REFERENCES movies(tmdb_id)
@@ -345,6 +349,12 @@ def subscription_for(provider_name):
 # two can't drift out of sync the way two copies of the same literal would.
 KIND_FLATRATE = "flatrate"
 FREE_KINDS = ("ads", "free")
+# Unlike FREE_KINDS, no filtering is applied to what's stored here: TMDB's
+# rent/buy lists are already clean storefronts (Amazon Video, Apple TV Store,
+# Google Play Movies, ...), not the reseller-channel noise the ads/free
+# bucket carries. No price is available on the free tier — never was, never
+# will be — this only ever shows *where*, not *how much*.
+RENT_BUY_KINDS = ("rent", "buy")
 
 # Ad-supported "free to watch" tiers, kept separate from SUBSCRIBED: these
 # aren't something paid for, they're free to anyone. TMDB lists them under the
@@ -417,6 +427,7 @@ def _migrate(conn):
         "trailer_key": "TEXT",
         "status": "TEXT",
         "release_date": "TEXT",
+        "certification": "TEXT",
     }
     changed = False
     for name, sql_type in additions.items():

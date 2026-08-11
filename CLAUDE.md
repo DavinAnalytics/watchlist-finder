@@ -86,33 +86,45 @@ search without it.
 ```sql
 movies(tmdb_id PK, title, year, runtime, poster_path,
        overview, director, genres, vote_average, vote_count,
-       top_cast, trailer_key, status, release_date)
+       top_cast, trailer_key, status, release_date, certification)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 ```
 
-All nine non-original columns were added 2026-08-10, after `movies` already
-had 67 rows, in three passes for the detail dialog: `poster_path` first, then
+All ten non-original columns were added 2026-08-10/11, after `movies` already
+had 67 rows, in four passes for the detail dialog: `poster_path` first, then
 `overview`/`director`/`genres`/`vote_average`/`vote_count`, then `top_cast`/
-`trailer_key`/`status`/`release_date`. `CREATE TABLE IF NOT EXISTS` can't add
-a column to a table that already exists, so `common.connect()` runs a small
-migration after the schema script — `PRAGMA table_info`, then `ALTER TABLE
-... ADD COLUMN` for whatever's missing. Any new column joins this way; the
-schema script alone only ever handles a fresh db. `cast` was avoided as a
-column name — it's a reserved SQL keyword — in favor of `top_cast`.
+`trailer_key`/`status`/`release_date`, then `certification`. `CREATE TABLE IF
+NOT EXISTS` can't add a column to a table that already exists, so
+`common.connect()` runs a small migration after the schema script —
+`PRAGMA table_info`, then `ALTER TABLE ... ADD COLUMN` for whatever's missing.
+Any new column joins this way; the schema script alone only ever handles a
+fresh db. `cast` was avoided as a column name — it's a reserved SQL keyword —
+in favor of `top_cast`.
+
+`upsert_movie()`'s INSERT is built from `resolver.ALL_COLUMNS`
+(`("tmdb_id", "title", "year") + BACKFILL_COLUMNS`) rather than three
+hand-written SQL fragments — a column list, a VALUES placeholder count, an ON
+CONFLICT SET clause — kept in sync by careful editing. That pattern needed
+fixing after two hand-edits in one session; a miscounted positional tuple
+would silently shift values into the wrong columns with no error. Adding a
+column now means one line in SCHEMA/`_migrate`/`BACKFILL_COLUMNS` and one key
+in the `values` dict inside `upsert_movie()` — nothing else to keep in sync.
 
 Pre-existing rows are backfilled without a separate script: `upsert_movie()`'s
 short-circuit (skip re-fetching TMDB details for a row already filled in) now
 requires every column in `resolver.BACKFILL_COLUMNS` to be non-NULL, not just
 `runtime`. The very next resolver run re-fetches every old row once and fills
-in whatever's missing — confirmed three times now, 70/70 each time. `overview`/
-`director`/`genres`/`top_cast`/`status`/`trailer_key` are stored as `""`
-rather than left NULL when TMDB genuinely has nothing, specifically so the
-short-circuit can tell "fetched, empty" from "never fetched" — without that,
-a title with no listed director (or, for `trailer_key`, plenty of older or
-obscure titles with no YouTube trailer in TMDB's data) would re-fetch forever.
+in whatever's missing — confirmed five times now, 70 or 71/71 each time
+(71 once "No Country for Old Men" joined the watchlist). `overview`/
+`director`/`genres`/`top_cast`/`status`/`trailer_key`/`certification` are
+stored as `""` rather than left NULL when TMDB genuinely has nothing,
+specifically so the short-circuit can tell "fetched, empty" from "never
+fetched" — without that, a title with no listed director (or, for
+`trailer_key`, plenty of older or obscure titles with no YouTube trailer in
+TMDB's data) would re-fetch forever.
 `vote_average`/`vote_count` default to `0.0`/`0` instead of staying raw for
 the same reason — "TMDB always returns them as numbers" turned out to be an
 assumption about response shape, not a guarantee, and trusting it blindly
@@ -127,7 +139,13 @@ matter. `director`/`top_cast`/`trailer_key` come from `credits`/`videos` via
 movie. Trailer selection prefers an official `Trailer`, then any `Trailer`,
 then a `Teaser` as a last resort, YouTube only — see `resolver._trailer_key()`
 for why the full video list has to be scanned rather than assuming a trailer
-comes first (it doesn't, reliably).
+comes first (it doesn't, reliably). `certification` (the US content rating —
+"R", "PG-13", ...) comes the same way, via `release_dates` added to the same
+`append_to_response` — three query params total now, still one API call.
+TMDB carries a separate release_dates entry per release event (festival,
+premiere, theatrical, digital, physical) and the rating isn't reliably
+attached to any particular one, so `resolver._certification()` takes the
+first non-empty value found in whatever order TMDB lists them.
 
 `favorites` and `watchlist` are separate tables sharing `movies`.
 
@@ -219,6 +237,17 @@ reached the table. Every read of `availability` now goes through
 `subscription_for()` *or* `free_tier_for()` — update both when adding a rule
 that touches what counts as watchable.
 
+**Rent/buy providers are stored too**, added 2026-08-11, but on a different
+rule than flatrate/ads: no filtering. TMDB's `rent`/`buy` kinds are already
+clean storefronts (Amazon Video, Apple TV Store, Google Play Movies, ...),
+not the reseller-channel noise the ads/free bucket carries, so every entry is
+kept (`common.RENT_BUY_KINDS`). These never count as "watchable" — they don't
+go through `subscription_for()`/`free_tier_for()`, don't affect the counts,
+and don't appear as a service tag. They only ever show as a "Rentable on ..."
+line in the detail dialog for a released title that isn't streaming anywhere
+subscribed (`render.rentable_snapshot()`), and only *where*, never for how
+much — TMDB's free API still has no price field, same as ever.
+
 TMDB does not expose expiration dates. "Leaving soon" is not implementable and
 shouldn't be attempted. Daily diffing catches departures the day after they
 happen, which is the accepted tradeoff.
@@ -267,15 +296,34 @@ misleading for something that was never eligible to stream at all. As of
 dormant; it activates the next time a genuinely upcoming title is added by
 hand.
 
-`release_badge()` compares `release_date` against *today's real date*, fresh,
-every render — not `status`. `status`/`release_date` are fetched once and
-frozen like everything else in `BACKFILL_COLUMNS`; trusting a frozen `status`
-string would mean a title backfilled as "Post Production" keeps showing a
-stale "Releases {date-in-the-past}" badge forever after it actually comes out
-and starts streaming, permanently hiding real, correctly-computed availability
-— caught in review before this ever shipped. Comparing the date instead
-self-heals the day the calendar catches up, with no re-fetch and nothing to
-remember to invalidate.
+Two layers guard against this badge going stale, fixed in two review passes
+on the same day the feature shipped:
+
+1. `resolver.SETTLED_STATUSES = {"", "Released", "Canceled"}`. Every other
+   `BACKFILL_COLUMNS` field is fetched once and frozen forever — that's the
+   whole point of the backfill mechanism. `status`/`release_date` can't join
+   that treatment: they're a real fact that changes over time, not a
+   fetch-quality problem the way an empty `overview` is. `upsert_movie()`'s
+   short-circuit now also requires `status` to be in `SETTLED_STATUSES`, so a
+   row backfilled as "Post Production" keeps re-fetching — cheaply, only for
+   the small number of titles genuinely still pending — until it actually
+   settles. Confirmed: 0 extra fetches against the real, all-"Released" db.
+   First caught the day this shipped, in the case where `release_date` had
+   already been captured; a second review pass the same day found the gap
+   still open for a title whose `release_date` had *never* been captured at
+   all (empty string, no date to compare against) — that title fell through
+   to trusting a frozen `status` string with no freshness check whatsoever.
+2. `release_badge()` still compares a captured `release_date` against
+   *today's real date*, fresh, every render, rather than trusting `status`
+   even when it is fresh — a second, independent check on top of the first,
+   not a replacement for it.
+
+Without layer 1, a title added long before release would show a stale
+"Releases {date-in-the-past}" badge (or, in the no-`release_date` case, a
+static "Not yet released" tag) forever after it actually came out and started
+streaming — permanently hiding real, correctly-computed availability. Both
+are exactly the "wrong result that looks right" failure this project is
+built against.
 
 Two accepted tradeoffs of doing this with no JavaScript, worth knowing rather
 than rediscovering:
@@ -307,11 +355,14 @@ the one place availability touches favorites — they are still never *filtered*
 by it, and the list stays complete elsewhere as a dedupe check and as something
 to paste into a chat when looking for recommendations.
 
-**Rental prices are not implementable.** `/watch/providers` returns provider
-lists per type (`flatrate`, `rent`, `buy`, `free`, `ads`) and no price field at
-all. Prices come from JustWatch, whose API is not free. A "cheap rentals under
-$N" section cannot be built on the free tier — same category as "leaving soon".
-Don't attempt it; don't approximate it with a made-up price.
+**Rental prices are not implementable — *where* to rent is, and that shipped
+2026-08-11.** `/watch/providers` returns provider lists per type (`flatrate`,
+`rent`, `buy`, `free`, `ads`) and no price field at all. Prices come from
+JustWatch, whose API is not free. A "cheap rentals under $N" section cannot
+be built on the free tier — same category as "leaving soon". Don't attempt
+it; don't approximate it with a made-up price. The dialog's "Rentable on ..."
+line (see Providers) is the honest version of this: which storefronts, never
+for how much.
 
 "New since yesterday" diffs against the previous poll date, not literally
 yesterday. If the Mac slept for two days, yesterday holds no rows and every
@@ -322,7 +373,34 @@ There was an "under 100 minutes" section. It was removed on 2026-08-09 — the
 runtime limit was its only reason to exist. Runtime still shows per title.
 
 A `--kid-awake` equivalent (G/PG via the release-dates endpoint, runtime under
-40m) is planned but not needed until 2027. Don't build it yet.
+40m) is planned but not needed until 2027. Don't build it yet. The dialog's
+`certification` badge (2026-08-11) is not that feature — it's display only, no
+new filtering or section, and doesn't move the 2027 timeline.
+
+**"Tonight's Pick"**, added 2026-08-11: a featured hero card above the
+summary counts, one title chosen from `new` if anything's new today, else
+from `streaming` (`render.tonight_pick()`). The choice is seeded by the poll
+date, not truly random — stable across repeat renders on the same day,
+changes only when the date does. Links to the same `#m{id}` dialog every
+other card for that title would use; no separate dialog markup for it.
+
+**Filter by service**, added 2026-08-11: a pill row (`render.render_filter_bar()`)
+tapping "Netflix" and showing only Netflix titles across New/Watchlist
+streaming/Favorites streaming. Pure CSS — hidden radio inputs
+(`render.render_filter_radios()`) sit as the first children of `<body>`,
+before `<main>`, so the `~` sibling combinator can reach in and hide any
+`.row-card` whose `data-services` attribute doesn't contain the checked
+service's slug (`render._slug()` — must stay in sync with the hardcoded
+slugs in template.html's filter CSS, verified against each other, not just
+assumed). The counts at the top stay fixed at their true unfiltered totals;
+recomputing them per filter isn't something CSS can do. Collapsed "not
+currently streaming" sections are untouched by the filter on purpose — they
+carry no service tag to filter by, and hiding some of a `<details>` whose
+`<summary>` states a fixed count (e.g. "(6)") would make that count read
+wrong while filtered. A filter with zero matching titles just leaves that
+section visually blank; there's no CSS way to detect "everything in this
+list is hidden" and swap in a fallback message without JavaScript. Accepted,
+same spirit as the dialog's other no-JS tradeoffs.
 
 **The rendered page is no longer fully self-contained.** The reskin's fonts
 load from `fonts.googleapis.com`, and posters hotlink `image.tmdb.org` — new

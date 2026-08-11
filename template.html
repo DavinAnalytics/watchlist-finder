@@ -86,6 +86,70 @@
   .counts .new b { color: var(--accent-2); }
   .counts span { color: var(--dim); font-size: .65rem; text-transform: uppercase; letter-spacing: .08em; }
 
+  .hero-card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--surface); border: var(--elev-border); box-shadow: var(--shadow-lg);
+    border-radius: var(--radius-card); padding: 1rem 1.15rem 1.2rem; margin: 0 0 1.5rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .hero-card:active { opacity: .9; }
+  .hero-kicker {
+    font-size: .68rem; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--accent); font-weight: 700; margin-bottom: .55rem;
+  }
+  .hero-body { display: flex; gap: 1rem; align-items: flex-start; }
+  .hero-poster { width: 4.5rem; height: 6.75rem; border-radius: .75rem; }
+  .hero-title { font-family: var(--font-heading); font-weight: 400; font-size: 1.3rem; line-height: 1.15; }
+  .hero-blurb { font-size: .82rem; color: var(--dim); margin: .5rem 0 0; line-height: 1.42; }
+
+  /* Service filter: pure CSS, driven by radio inputs that sit as a previous
+     sibling of <main> (see template body — the "~" combinator only reaches
+     forward across siblings, never into a parent or backward). Checking one
+     hides every "on"-variant card whose data-services doesn't contain that
+     service's slug. #filter-all carries no hide-rule at all — "all" is the
+     default, nothing-hidden state, not a rule of its own. A filter with zero
+     live matches leaves a section visually blank rather than showing a
+     fallback message: computing "is everything in this list hidden" isn't
+     something CSS can do without JavaScript. Accepted, same spirit as the
+     dialog's other no-JS tradeoffs. */
+  .filter-radio { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+  .filter-bar { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1.7rem; }
+  .filter-bar .pill {
+    --tag-color: var(--dim);
+    display: inline-flex; align-items: center; font-size: .72rem; font-weight: 600;
+    padding: .4rem .8rem; border-radius: var(--radius-tag); cursor: pointer;
+    background: color-mix(in srgb, var(--tag-color) 12%, var(--bg));
+    color: var(--text); border: 1px solid var(--divider);
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  /* One rule per filterable service. Slugs must match _slug() in render.py
+     exactly — "Prime Video" -> "prime-video", "Paramount+" -> "paramount",
+     "YouTube (free)" -> "youtube-free" — or a pill would filter to nothing. */
+  #filter-netflix:checked ~ main .row-card:not(.row-card-off):not([data-services~="netflix"]) { display: none; }
+  #filter-hulu:checked ~ main .row-card:not(.row-card-off):not([data-services~="hulu"]) { display: none; }
+  #filter-prime-video:checked ~ main .row-card:not(.row-card-off):not([data-services~="prime-video"]) { display: none; }
+  #filter-peacock:checked ~ main .row-card:not(.row-card-off):not([data-services~="peacock"]) { display: none; }
+  #filter-paramount:checked ~ main .row-card:not(.row-card-off):not([data-services~="paramount"]) { display: none; }
+  #filter-youtube-free:checked ~ main .row-card:not(.row-card-off):not([data-services~="youtube-free"]) { display: none; }
+
+  /* Active-pill highlight only — cosmetic, not the filtering mechanism
+     itself. :has() reaches from <body> down to both the (sibling-of-main)
+     radio and the (descendant-of-main) label at once, which the "~"
+     technique above can't do in one step. Degrades gracefully: without
+     :has() support the filter still works, the active pill just doesn't
+     visually highlight. */
+  body:has(#filter-all:checked) label[for="filter-all"],
+  body:has(#filter-netflix:checked) label[for="filter-netflix"],
+  body:has(#filter-hulu:checked) label[for="filter-hulu"],
+  body:has(#filter-prime-video:checked) label[for="filter-prime-video"],
+  body:has(#filter-peacock:checked) label[for="filter-peacock"],
+  body:has(#filter-paramount:checked) label[for="filter-paramount"],
+  body:has(#filter-youtube-free:checked) label[for="filter-youtube-free"] {
+    background: color-mix(in srgb, var(--tag-color) 85%, var(--bg));
+    color: color-mix(in srgb, var(--tag-color) 20%, white);
+    border-color: transparent;
+  }
+
   h2 {
     font-family: var(--font-heading); font-weight: 400;
     font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
@@ -191,15 +255,19 @@
 </style>
 </head>
 <body>
+$filter_radios
 <main>
   <h1>Watchlist</h1>
   <p class="stamp">$generated</p>
   $stale_banner
+  $hero
   <div class="counts">
     <div><b>$count_streaming</b><span>streaming</span></div>
     <div class="new"><b>$count_new</b><span>new</span></div>
     <div><b>$count_gone</b><span>gone</span></div>
   </div>
+
+  $filter_bar
 
   <h2>New since $prev_label</h2>
   $section_new

@@ -17,6 +17,11 @@ also carries Tubi, Pluto TV, The Roku Channel, Cineverse, and more that were
 never asked for. Only entries common.free_tier_for() recognizes (YouTube's free
 tier, currently) are kept, so the availability table doesn't silently grow to
 track services nobody subscribed to or asked about.
+
+Rent/buy providers ('rent'/'buy' kinds) are stored wholesale, unlike ads/free
+— that bucket is already clean storefronts, no reseller-channel noise to
+filter out. Shown on the page as *where* a non-streaming title can be
+rented, never *for how much*; TMDB's free API has no price field.
 """
 
 import argparse
@@ -49,8 +54,9 @@ def resolved_ids(conn):
 def providers_for(tmdb, tmdb_id):
     """-> sorted list of (kind, provider_name), possibly empty.
 
-    Every flatrate provider is kept. Ad-supported entries are kept only when
-    common.free_tier_for() recognizes them — see the module docstring.
+    Every flatrate and rent/buy provider is kept. Ad-supported entries are
+    kept only when common.free_tier_for() recognizes them — see the module
+    docstring for why the three groups are treated differently.
     """
     data = tmdb.watch_providers(tmdb_id)
     region = ((data or {}).get("results") or {}).get(REGION) or {}
@@ -69,6 +75,14 @@ def providers_for(tmdb, tmdb_id):
                 continue
             name = (entry.get("provider_name") or "").strip()
             if name and common.free_tier_for(name):
+                pairs.add((kind, name))
+
+    for kind in common.RENT_BUY_KINDS:
+        for entry in region.get(kind) or []:
+            if not isinstance(entry, dict):
+                continue
+            name = (entry.get("provider_name") or "").strip()
+            if name:
                 pairs.add((kind, name))
 
     return sorted(pairs)
