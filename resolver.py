@@ -90,17 +90,38 @@ def resolve_one(tmdb, raw, year, logger):
     return tmdb_id, None
 
 
+BACKFILL_COLUMNS = (
+    "runtime", "poster_path", "overview", "director", "genres", "vote_average", "vote_count",
+)
+
+
+DIRECTOR_JOBS = {"Director", "Co-Director"}
+
+
+def _director(details):
+    crew = (details.get("credits") or {}).get("crew") or []
+    names = [c["name"] for c in crew if c.get("job") in DIRECTOR_JOBS and c.get("name")]
+    return ", ".join(dict.fromkeys(names))  # de-duped, order preserved
+
+
 def upsert_movie(conn, tmdb, tmdb_id, logger):
-    """Fill movies(title, year, runtime, poster_path). Details are fetched once
-    per id — except that a row missing poster_path (added 2026-08-10, so every
-    pre-existing row lacks it once) gets one more fetch to backfill it. A title
-    TMDB genuinely has no poster for will keep re-fetching every run; accepted,
-    same tradeoff as the existing null-runtime case, and expected to be rare.
+    """Fill in the movies row. Details are fetched once per id — except that a
+    row missing any of BACKFILL_COLUMNS (grows as fields get added; poster_path
+    2026-08-10, overview/director/genres/vote_average/vote_count 2026-08-10
+    later the same day) gets one more fetch to backfill what's missing.
+
+    overview/director/genres are stored as "" rather than left NULL when TMDB
+    genuinely has nothing, specifically so the short-circuit can tell "fetched,
+    empty" from "never fetched" and doesn't re-request forever. vote_average/
+    vote_count get no such treatment — TMDB always returns them as numbers (0
+    for an unrated title), so a real fetch never leaves them NULL. poster_path
+    is the one field that can legitimately stay NULL after a real fetch; a
+    title TMDB has no poster for re-fetches every run. Accepted, rare.
     """
     row = conn.execute(
-        "SELECT runtime, poster_path FROM movies WHERE tmdb_id = ?", (tmdb_id,)
+        f"SELECT {', '.join(BACKFILL_COLUMNS)} FROM movies WHERE tmdb_id = ?", (tmdb_id,)
     ).fetchone()
-    if row is not None and row["runtime"] is not None and row["poster_path"] is not None:
+    if row is not None and all(row[c] is not None for c in BACKFILL_COLUMNS):
         return True
 
     details = tmdb.movie(tmdb_id)
@@ -109,18 +130,33 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
         return False
 
     date = (details.get("release_date") or "")
+    genres = ", ".join(g["name"] for g in details.get("genres") or [] if g.get("name"))
     conn.execute(
-        "INSERT INTO movies (tmdb_id, title, year, runtime, poster_path) "
-        "VALUES (?, ?, ?, ?, ?) "
+        "INSERT INTO movies (tmdb_id, title, year, runtime, poster_path, "
+        "overview, director, genres, vote_average, vote_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(tmdb_id) DO UPDATE SET title = excluded.title, "
         "year = excluded.year, runtime = excluded.runtime, "
-        "poster_path = excluded.poster_path",
+        "poster_path = excluded.poster_path, overview = excluded.overview, "
+        "director = excluded.director, genres = excluded.genres, "
+        "vote_average = excluded.vote_average, vote_count = excluded.vote_count",
         (
             tmdb_id,
             details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
             int(date[:4]) if date[:4].isdigit() else None,
             details.get("runtime"),
             details.get("poster_path"),
+            details.get("overview") or "",
+            _director(details),
+            genres,
+            # Not left raw: "TMDB always returns these as numbers" is an
+            # assumption about response shape, not a guarantee. If a response
+            # ever omits them, a raw None here would never satisfy
+            # BACKFILL_COLUMNS and the row would re-fetch forever — same
+            # failure this 0/0.0 default already avoids for the three string
+            # fields above.
+            details.get("vote_average") if details.get("vote_average") is not None else 0.0,
+            details.get("vote_count") if details.get("vote_count") is not None else 0,
         ),
     )
     return True

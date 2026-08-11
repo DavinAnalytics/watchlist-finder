@@ -84,25 +84,37 @@ search without it.
 ## Schema
 
 ```sql
-movies(tmdb_id PK, title, year, runtime, poster_path)
+movies(tmdb_id PK, title, year, runtime, poster_path,
+       overview, director, genres, vote_average, vote_count)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 ```
 
-`poster_path` was added 2026-08-10, after `movies` already had 67 rows.
-`CREATE TABLE IF NOT EXISTS` can't add a column to a table that already exists,
-so `common.connect()` runs a small migration after the schema script —
-`PRAGMA table_info`, then `ALTER TABLE ... ADD COLUMN` if it's missing. Any new
-column joins this way; the schema script alone only ever handles a fresh db.
+`poster_path` was added 2026-08-10, after `movies` already had 67 rows;
+`overview`/`director`/`genres`/`vote_average`/`vote_count` followed the same
+day for the detail dialog. `CREATE TABLE IF NOT EXISTS` can't add a column to
+a table that already exists, so `common.connect()` runs a small migration
+after the schema script — `PRAGMA table_info`, then `ALTER TABLE ... ADD
+COLUMN` for whatever's missing. Any new column joins this way; the schema
+script alone only ever handles a fresh db.
 
 Pre-existing rows are backfilled without a separate script: `upsert_movie()`'s
 short-circuit (skip re-fetching TMDB details for a row already filled in) now
-requires `poster_path IS NOT NULL` too, not just `runtime`. The very next
-resolver run re-fetches every old row once and fills it in. A title TMDB
-genuinely has no poster for keeps re-fetching every run — accepted, same
-tradeoff already made for `runtime IS NULL`, and rare enough not to matter.
+requires every column in `resolver.BACKFILL_COLUMNS` to be non-NULL, not just
+`runtime`. The very next resolver run re-fetches every old row once and fills
+in whatever's missing. `overview`/`director`/`genres` are stored as `""`
+rather than left NULL when TMDB genuinely has nothing, specifically so the
+short-circuit can tell "fetched, empty" from "never fetched" — without that,
+a title with no listed director would re-fetch forever. `vote_average`/
+`vote_count` need no such treatment; TMDB always returns them as numbers.
+`poster_path` is the one column that can legitimately stay NULL after a real
+fetch — a title TMDB has no poster for keeps re-fetching every run, accepted,
+same tradeoff already made for `runtime IS NULL`, and rare enough not to
+matter. `director` comes from `credits.crew` via `append_to_response=credits`
+on the existing `/movie/{id}` call (`common.TMDB.movie()`) — one extra query
+param, not a second API call per movie.
 
 `favorites` and `watchlist` are separate tables sharing `movies`.
 
@@ -225,9 +237,14 @@ services) is all data render.py already computes and would already be sitting
 in the page's HTML, hidden; opening it needs only a visibility toggle, no
 recomputation. Built 2026-08-10, the same day as the clarification: a CSS
 `:target` toggle in `render.py`'s `render_dialogs()`. Tapping a row (every
-row, streaming or hidden) opens a bottom sheet with a larger poster, the full
-service list or a "not currently streaming" tag, and a plain outbound link to
-the title's TMDB page (built from the id alone — no new fetch, no new schema).
+row, streaming or hidden) opens a bottom sheet with a larger poster, genre and
+director, TMDB's user score and vote count, the full service list or a "not
+currently streaming" tag, a synopsis, and an outbound link to the title's
+TMDB page for cast, trailer, and rental prices the free API doesn't expose
+(same day, same schema addition — see `movies.overview`/`director`/`genres`/
+`vote_average`/`vote_count` in Schema). Every field a title might legitimately
+be missing (mid-backfill, or TMDB genuinely has nothing) degrades to just not
+showing that line, not a blank or a crash.
 
 Two accepted tradeoffs of doing this with no JavaScript, worth knowing rather
 than rediscovering:

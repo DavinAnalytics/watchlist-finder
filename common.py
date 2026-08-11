@@ -250,7 +250,10 @@ class TMDB:
         )
 
     def movie(self, tmdb_id):
-        return self.get(f"/movie/{int(tmdb_id)}", language="en-US")
+        # append_to_response bundles credits into this same request — the
+        # director comes from credits.crew, and without this it would take a
+        # second call per movie just to ask "who directed it".
+        return self.get(f"/movie/{int(tmdb_id)}", language="en-US", append_to_response="credits")
 
     def watch_providers(self, tmdb_id):
         return self.get(f"/movie/{int(tmdb_id)}/watch/providers")
@@ -268,11 +271,16 @@ def _retry_after(exc, attempt):
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS movies (
-    tmdb_id     INTEGER PRIMARY KEY,
-    title       TEXT NOT NULL,
-    year        INTEGER,
-    runtime     INTEGER,
-    poster_path TEXT
+    tmdb_id       INTEGER PRIMARY KEY,
+    title         TEXT NOT NULL,
+    year          INTEGER,
+    runtime       INTEGER,
+    poster_path   TEXT,
+    overview      TEXT,
+    director      TEXT,
+    genres        TEXT,
+    vote_average  REAL,
+    vote_count    INTEGER
 );
 CREATE TABLE IF NOT EXISTS favorites (
     tmdb_id INTEGER PRIMARY KEY REFERENCES movies(tmdb_id)
@@ -392,6 +400,18 @@ def _migrate(conn):
     table. The db is documented as regenerable, but wiping it on every schema
     change would also wipe poll_log and availability history for no reason."""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(movies)")}
-    if "poster_path" not in cols:
-        conn.execute("ALTER TABLE movies ADD COLUMN poster_path TEXT")
+    additions = {
+        "poster_path": "TEXT",
+        "overview": "TEXT",
+        "director": "TEXT",
+        "genres": "TEXT",
+        "vote_average": "REAL",
+        "vote_count": "INTEGER",
+    }
+    changed = False
+    for name, sql_type in additions.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE movies ADD COLUMN {name} {sql_type}")
+            changed = True
+    if changed:
         conn.commit()

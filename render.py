@@ -85,7 +85,10 @@ def snapshot(conn, on, table="watchlist"):
 def movie_rows(conn):
     return {
         r["tmdb_id"]: r
-        for r in conn.execute("SELECT tmdb_id, title, year, runtime, poster_path FROM movies")
+        for r in conn.execute(
+            "SELECT tmdb_id, title, year, runtime, poster_path, "
+            "overview, director, genres, vote_average, vote_count FROM movies"
+        )
     }
 
 
@@ -196,8 +199,33 @@ def render_dialogs(items, movies):
         year = movie["year"] if movie else None
         runtime = movie["runtime"] if movie else None
         poster_path = movie["poster_path"] if movie else None
+        # None until the next resolver run backfills a pre-existing row —
+        # every field below degrades to "just don't show that line" rather
+        # than a blank or a crash.
+        overview = (movie["overview"] if movie else "") or ""
+        director = (movie["director"] if movie else "") or ""
+        genres = (movie["genres"] if movie else "") or ""
+        vote_average = movie["vote_average"] if movie else None
+        vote_count = movie["vote_count"] if movie else None
 
         meta = " · ".join(esc(v) for v in (year, f"{runtime} min" if runtime else None) if v)
+
+        byline = []
+        if genres:
+            byline.append(esc(genres))
+        if director:
+            byline.append(f"Directed by {esc(director)}")
+        byline_html = f'<div class="card-meta">{" · ".join(byline)}</div>' if byline else ""
+
+        score_html = ""
+        if vote_average is not None and vote_count:
+            score_html = (
+                f'<div class="score">★ {vote_average:.1f}'
+                f'<span class="text-muted"> · {vote_count:,} votes</span></div>'
+            )
+
+        overview_html = f'<p class="dialog-body">{esc(overview)}</p>' if overview else ""
+
         poster = poster_html(
             poster_path,
             css_class="poster dialog-poster",
@@ -215,10 +243,11 @@ def render_dialogs(items, movies):
             f'<a href="#_close" class="dialog-close" aria-label="Close">✕</a>'
             f'<div class="dialog-head">{poster}'
             f'<div><div id="m{tmdb_id}-title" class="dialog-title">{esc(title)}</div>'
-            f'<div class="card-meta">{meta}</div></div></div>'
+            f'<div class="card-meta">{meta}</div>{byline_html}{score_html}</div></div>'
             f'<div class="tag-row">{tag_chips(services)}</div>'
-            f'<p class="dialog-body">More detail, cast, and every rental or purchase price: '
-            f'<a href="{esc(tmdb_url)}">{esc(title)} on TMDB</a>.</p>'
+            f"{overview_html}"
+            f'<p class="dialog-link"><a href="{esc(tmdb_url)}">'
+            f"Cast, trailer, and rental prices on TMDB →</a></p>"
             f"</div></div>"
         )
     return "\n".join(out)
