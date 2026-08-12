@@ -1,5 +1,4 @@
 # Titles TMDB could not resolve confidently. Fix by adding the correct
 # id to data/resolved.json by hand, keyed on the exact raw string below.
-# regenerated 2026-08-11T19:55:53
+# regenerated 2026-08-11T19:56:25
 
-watchlist	2013	Descent into Darkness	low match 0.67 vs "Descent Into Darkness: My European Nightmare" (id 359642, 2013)
