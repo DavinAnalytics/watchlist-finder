@@ -63,6 +63,17 @@ POLL_BUDGET = 40
 # day and the section would never change.
 RECENT_DAYS = 14
 
+# Owner's call, 2026-08-12: nothing older than this. TMDB's recommendations
+# lean heavily on a film's era, so a favorites list with any older entry drags
+# up a steady supply of 70s/80s titles that were never going to get watched.
+# Applied when candidates are collected, not after polling, so a rejected year
+# costs nothing — it's read from the recommendations response that's already in
+# hand rather than a call of its own. This is the only place the rule lives:
+# render.py does not re-check it, so a pick stored before the rule existed
+# stays on the page until it ages out (one was removed by hand the day this
+# shipped, and the day topped back up to five).
+MIN_YEAR = 1990
+
 
 def sampled_sources(conn, seed, limit=SOURCE_SAMPLE):
     """-> a seeded-random sample of favorite ids, as the recommendation seeds.
@@ -99,7 +110,15 @@ def excluded_ids(conn, seen_on):
 
 
 def candidates_for(tmdb, source_id):
-    """-> [tmdb_id] from TMDB's recommendations for one movie, in its order."""
+    """-> [tmdb_id] from TMDB's recommendations for one movie, in its order.
+
+    Filtered to MIN_YEAR and newer. A candidate whose release_date TMDB doesn't
+    carry is dropped too: unknown is not the same as recent, and with 150-odd
+    candidates a run can afford to skip the ambiguous ones rather than risk
+    surfacing a 1970s title whose date happens to be missing. Reuses
+    resolver.release_year() rather than re-parsing the date — same field, same
+    shape, already proven against this API.
+    """
     data = tmdb.recommendations(source_id)
     out = []
     for entry in (data or {}).get("results") or []:
@@ -108,8 +127,12 @@ def candidates_for(tmdb, source_id):
         tmdb_id = entry.get("id")
         # Adult titles are filtered out of search elsewhere; this endpoint has
         # no include_adult parameter, so it's done by hand here.
-        if isinstance(tmdb_id, int) and not entry.get("adult"):
-            out.append(tmdb_id)
+        if not isinstance(tmdb_id, int) or entry.get("adult"):
+            continue
+        year = resolver.release_year(entry)
+        if year is None or year < MIN_YEAR:
+            continue
+        out.append(tmdb_id)
     return out
 
 

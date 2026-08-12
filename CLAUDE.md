@@ -434,6 +434,21 @@ any real subscription (see Providers), a pick can be surfaced on a service not
 actually paid for yet. That's the same accepted tradeoff, applied consistently
 — a title must not read as streaming in one section and not in another.
 
+**Nothing older than `MIN_YEAR` (1990)**, owner's call 2026-08-12. TMDB's
+recommendations lean hard on a film's era, so a favorites list with any older
+entry pulls up a steady supply of 70s/80s titles — the first live run surfaced
+*52 Pick-Up* (1986) off The Wolf of Wall Street. The rule is applied when
+candidates are collected, reading the `release_date` already in the
+recommendations response, so a rejected year costs no extra call and never
+burns a provider poll. It typically removes about a third of the pool (153 →
+105 candidates on the day it shipped). A candidate whose `release_date` TMDB
+doesn't carry is dropped too: unknown is not the same as recent, and there are
+enough candidates to afford skipping the ambiguous ones. `recommend.py` is the
+only place this rule lives — `render.py` deliberately does not re-check it, so
+a pick stored before the rule existed stays until it ages out. The one that
+existed was deleted by hand and the day topped back up to five, which is what
+that mechanism is for.
+
 Costs and bounds, all deliberate:
 
 - `POLL_BUDGET` (40) caps provider polls per run. Candidates aren't curated the
