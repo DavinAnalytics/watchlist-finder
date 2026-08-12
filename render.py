@@ -31,23 +31,47 @@ import common
 MIN_POLL_COVERAGE = 0.9  # below this share of the watchlist, say so on the page
 
 
+# poll_log is shared: sync_providers.py writes a row per list title per day,
+# and recommend.py writes one per candidate it polls — and candidates are on
+# neither list by definition. Every date this file derives must therefore count
+# only rows for titles actually on a list, or a recommend.py run on a date
+# sync_providers.py never reached would become the page's "latest poll" and
+# render a watchlist that polled nothing. A static fragment, never interpolated
+# with anything but itself.
+POLLED_LIST_MEMBER = (
+    "EXISTS (SELECT 1 FROM watchlist w WHERE w.tmdb_id = p.tmdb_id) "
+    "OR EXISTS (SELECT 1 FROM favorites f WHERE f.tmdb_id = p.tmdb_id)"
+)
+
+
 def poll_dates(conn, on=None):
     """-> (latest, previous). Either may be None.
 
     The diff is against the previous poll, not literally yesterday: if the Mac
     was asleep for two days, "yesterday" holds no rows and every title would
     look brand new.
+
+    Both dates come only from list titles' poll_log rows — see
+    POLLED_LIST_MEMBER. sync.py's stage order already guarantees providers runs
+    before recommend, but this makes the page's dates independent of that
+    ordering rather than quietly dependent on it.
     """
     if on:
         latest = conn.execute(
-            "SELECT MAX(polled_on) AS d FROM poll_log WHERE polled_on <= ?", (on,)
+            f"SELECT MAX(p.polled_on) AS d FROM poll_log p "
+            f"WHERE ({POLLED_LIST_MEMBER}) AND p.polled_on <= ?",
+            (on,),
         ).fetchone()["d"]
     else:
-        latest = conn.execute("SELECT MAX(polled_on) AS d FROM poll_log").fetchone()["d"]
+        latest = conn.execute(
+            f"SELECT MAX(p.polled_on) AS d FROM poll_log p WHERE ({POLLED_LIST_MEMBER})"
+        ).fetchone()["d"]
     if latest is None:
         return None, None
     prev = conn.execute(
-        "SELECT MAX(polled_on) AS d FROM poll_log WHERE polled_on < ?", (latest,)
+        f"SELECT MAX(p.polled_on) AS d FROM poll_log p "
+        f"WHERE ({POLLED_LIST_MEMBER}) AND p.polled_on < ?",
+        (latest,),
     ).fetchone()["d"]
     return latest, prev
 
@@ -64,7 +88,7 @@ def snapshot(conn, on, table="watchlist"):
     if table not in LIST_TABLES:
         raise ValueError(f"unknown list table {table!r}")
 
-    kinds = (common.KIND_FLATRATE, *common.FREE_KINDS)
+    kinds = common.STREAMING_KINDS
     placeholders = ", ".join("?" * len(kinds))
     rows = conn.execute(
         "SELECT p.tmdb_id AS tmdb_id, a.provider AS provider "
@@ -103,6 +127,39 @@ def rentable_snapshot(conn, on):
     for row in rows:
         snap.setdefault(row["tmdb_id"], set()).add(row["provider"])
     return {k: sorted(v) for k, v in snap.items()}
+
+
+def recommendation_snapshot(conn, on):
+    """-> {tmdb_id: (source_id, sorted[service])} for the picks made on `on`.
+
+    recommend.py only ever stores a pick that was streaming when it was
+    picked, and it wrote that title's availability rows under the same date in
+    the same shape as any other title's — so this reads them back exactly the
+    way snapshot() does, and a recommendation's tags are computed by the same
+    subscription_for()/free_tier_for() pass as everything else on the page.
+
+    The LEFT JOIN keeps a pick whose availability rows are somehow missing,
+    rather than dropping it silently; it renders with no tags, the same as any
+    other title with nothing to show.
+    """
+    placeholders = ", ".join("?" * len(common.STREAMING_KINDS))
+    rows = conn.execute(
+        "SELECT r.tmdb_id AS tmdb_id, r.source_id AS source_id, a.provider AS provider "
+        "FROM recommendations r "
+        "LEFT JOIN availability a "
+        f"  ON a.tmdb_id = r.tmdb_id AND a.seen_on = r.picked_on "
+        f"  AND a.kind IN ({placeholders}) "
+        "WHERE r.picked_on = ?",
+        (*common.STREAMING_KINDS, on),
+    ).fetchall()
+
+    snap = {}
+    for row in rows:
+        _, services = snap.setdefault(row["tmdb_id"], (row["source_id"], set()))
+        label = common.subscription_for(row["provider"]) or common.free_tier_for(row["provider"])
+        if label:
+            services.add(label)
+    return {k: (source_id, sorted(v)) for k, (source_id, v) in snap.items()}
 
 
 def movie_rows(conn):
@@ -237,6 +294,59 @@ def render_list(items, movies, empty_text, *, variant="on"):
             f'<li><a class="{card_class}" href="#m{tmdb_id}"{services_attr}>{poster}'
             f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
             f"{meta_html}{tags_html}</div></a></li>"
+        )
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def render_recommendations(items, movies, empty_text):
+    """items: {tmdb_id: (source_id, [services])} -> the "Because you liked" list.
+
+    A near-twin of render_list(variant="on") rather than a parameter on it:
+    these cards carry an extra attribution line, and every one of them is by
+    construction streaming (recommend.py never stores a pick that isn't), so
+    the not-streaming branches render_list() has to carry are all dead code
+    here. Kept separate so neither function grows a mode the other ignores.
+
+    The source title is looked up like any other movie row and simply omitted
+    if it's missing — the recommendation is still worth showing without its
+    attribution line, and a favorite always has a movies row anyway.
+    """
+    if not items:
+        return f'<p class="empty">{esc(empty_text)}</p>'
+
+    # sort_key() only reads item[0], so it sorts these (id, (source, services))
+    # pairs by title exactly as it does the (id, services) pairs elsewhere.
+    ordered = sorted(items.items(), key=sort_key(movies))
+
+    out = ["<ul>"]
+    for tmdb_id, (source_id, services) in ordered:
+        movie = movies.get(tmdb_id)
+        title = movie["title"] if movie else f"tmdb:{tmdb_id}"
+        year = movie["year"] if movie else None
+        genres = (movie["genres"] if movie else "") or ""
+
+        meta = " · ".join(esc(v) for v in (year, genres or None) if v)
+        meta_html = f'<div class="card-meta">{meta}</div>' if meta else ""
+
+        source = movies.get(source_id)
+        because_html = ""
+        if source:
+            because_html = (
+                f'<div class="card-because">Because you liked {esc(source["title"])}</div>'
+            )
+
+        tags_html = ""
+        services_attr = ""
+        if services:
+            tags_html = f'<div class="tag-row">{tag_chips(services)}</div>'
+            services_attr = f' data-services="{esc(" ".join(_slug(s) for s in services))}"'
+
+        out.append(
+            f'<li><a class="row-card elev-sm" href="#m{tmdb_id}"{services_attr}>'
+            f'{poster_html(movie["poster_path"] if movie else None)}'
+            f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
+            f"{meta_html}{because_html}{tags_html}</div></a></li>"
         )
     out.append("</ul>")
     return "\n".join(out)
@@ -548,14 +658,28 @@ def main(argv=None):
             for i in members(conn, "favorites") - set(fav_streaming) - members(conn, "watchlist")
         }
 
-        # Every id shown anywhere on the page needs a dialog. The four sets
+        # Today's "Because you liked X" picks. recommend.py already excluded
+        # everything on either list when it chose them, but that was a
+        # snapshot taken at pick time: this file can be re-run by hand later,
+        # after a title got added to watchlist.txt and resolved. Re-checking
+        # membership here keeps the "recommendation" honest (it isn't one, if
+        # it's already on a list) and keeps the dialog groups below disjoint.
+        listed = members(conn, "watchlist") | members(conn, "favorites")
+        recommended = {
+            i: v for i, v in recommendation_snapshot(conn, latest).items() if i not in listed
+        }
+
+        # Every id shown anywhere on the page needs a dialog. The five sets
         # are pairwise disjoint by construction (fav_streaming excludes
-        # watchlist ids, *_hidden excludes their *_streaming counterpart), so
-        # a plain merge is safe — see render_dialogs()'s own note for the
-        # defensive case where that construction ever changes.
+        # watchlist ids, *_hidden excludes their *_streaming counterpart, and
+        # `recommended` was just filtered against both lists), so a plain
+        # merge is safe — see render_dialogs()'s own note for the defensive
+        # case where that construction ever changes.
         dialog_items = {}
         for group in (streaming, watch_hidden, fav_streaming, fav_hidden):
             dialog_items.update(group)
+        # Values here are (source_id, services), not a bare service list.
+        dialog_items.update({i: services for i, (_, services) in recommended.items()})
 
         pick_id = tonight_pick(streaming, new, latest)
         hero_html = render_hero(pick_id, streaming.get(pick_id, []), movies)
@@ -608,6 +732,9 @@ def main(argv=None):
             section_watchlist_hidden=render_details(
                 "Not currently streaming", sorted(watch_hidden.items(), key=key), movies
             ),
+            section_recommended=render_recommendations(
+                recommended, movies, "No recommendations today."
+            ),
             section_favorites=render_list(
                 sorted(fav_streaming.items(), key=key),
                 movies,
@@ -634,9 +761,9 @@ def main(argv=None):
     elapsed = (dt.datetime.now() - started).total_seconds()
     logger.info(
         "run complete in %.1fs: wrote %s — %d streaming, %d new, %d gone, "
-        "%d favorites streaming (%s vs %s)",
-        elapsed, out_path, len(streaming), len(new), len(gone), len(fav_streaming),
-        latest, prev,
+        "%d recommended, %d favorites streaming (%s vs %s)",
+        elapsed, out_path, len(streaming), len(new), len(gone), len(recommended),
+        len(fav_streaming), latest, prev,
     )
     return 0
 

@@ -47,6 +47,7 @@ watchlist/
 ├── common.py              # paths, .env, TMDB client, schema, atomic write
 ├── resolver.py            # step 1: text -> tmdb ids
 ├── sync_providers.py      # step 2: availability
+├── recommend.py           # step 2b: today's "because you liked" picks
 ├── render.py              # step 3: the page
 ├── sync.py                # runs 1-3 in order, then commits and pushes
 ├── template.html
@@ -91,6 +92,7 @@ favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
+recommendations(tmdb_id FK, source_id FK, picked_on DATE)
 ```
 
 All ten non-original columns were added 2026-08-10/11, after `movies` already
@@ -158,6 +160,13 @@ it, a movie whose provider fetch failed has no availability rows for today,
 which is indistinguishable from a movie that genuinely left every service — and
 the diff invents a departure on every network hiccup. Anything absent from
 `poll_log` for a date is unknown for that date, not gone.
+
+`recommendations` is append-only for the same reason `availability` is: the
+history is what lets `recommend.py` refuse to re-pick anything chosen in the
+last `RECENT_DAYS` (14). Without it, a title several favorites all recommend
+would win every day and the section would never change. It was added as a new
+*table*, so `CREATE TABLE IF NOT EXISTS` covers both a fresh db and the
+existing one — no `_migrate()` entry, unlike the eleven added columns above.
 
 Membership in `favorites` and `watchlist` is decided by the text files and only
 by the text files. Never let the success of an API call decide whether a row
@@ -268,7 +277,7 @@ happen, which is the accepted tradeoff.
 ## Page sections
 
 In order: summary counts (streaming / new / gone), new since yesterday,
-watchlist streaming, favorites streaming.
+watchlist streaming, recommended for you, favorites streaming.
 
 Each streaming section is followed by a collapsed "not currently streaming (N)"
 block listing the rest of that list. A title that simply vanishes from the page
@@ -405,6 +414,80 @@ date, not truly random — stable across repeat renders on the same day,
 changes only when the date does. Links to the same `#m{id}` dialog every
 other card for that title would use; no separate dialog markup for it.
 
+**"Recommended for you"**, added 2026-08-12: five daily "Because you liked X"
+picks, sitting between watchlist streaming and favorites streaming.
+`recommend.py` samples `SOURCE_SAMPLE` (8) favorites at random, pulls TMDB's
+`/movie/{id}/recommendations` for each, and walks the candidates
+**round-robin** across sources rather than draining one at a time — otherwise
+the whole section reads "because you liked" a single film. First source to
+offer a title keeps it, so nothing is attributed twice.
+
+**A pick must be streaming on a subscribed service (or free on YouTube).** A
+recommendation you can't watch tonight is an advert, not a recommendation. That
+means candidates need availability data, and they are on neither list, so
+`sync_providers.resolved_ids()` will never poll them — `recommend.py` does its
+own polling and writes the same `availability`/`poll_log` rows, same date, same
+shape. `render.recommendation_snapshot()` then reads a pick's services through
+the identical `subscription_for()`/`free_tier_for()` pass as everything else.
+Note the consequence: because Max and Apple TV+ are in `SUBSCRIBED` ahead of
+any real subscription (see Providers), a pick can be surfaced on a service not
+actually paid for yet. That's the same accepted tradeoff, applied consistently
+— a title must not read as streaming in one section and not in another.
+
+Costs and bounds, all deliberate:
+
+- `POLL_BUDGET` (40) caps provider polls per run. Candidates aren't curated the
+  way the watchlist is, so the hit rate is lower and an uncapped search would
+  keep calling until it got lucky. Hitting the cap just means fewer picks,
+  which the page renders honestly. In practice the first real run needed only
+  8 polls for 5 picks.
+- The detail fetch (`resolver.upsert_movie()`) happens *only* for a title that
+  already passed the streaming check — it's what gives the pick its card and
+  dialog, and satisfies the `movies` foreign key. Rejected candidates cost one
+  provider call and nothing else, and get re-polled on a later day; paying a
+  detail call per candidate would double the run for data thrown away.
+- Seeded by the date, like Tonight's Pick. A day that already has a full set is
+  skipped **before any API call**, so re-running `sync.py` by hand doesn't
+  reshuffle the page or spend calls. A partial day *tops up*: today's picks are
+  excluded from the candidate queue and the counter starts from how many are
+  already stored, so an interrupted run adds exactly the shortfall and polls
+  only for it. Counting inserts from zero instead would land on five only while
+  the queue reproduced identically — which stops being true the moment
+  `favorites.txt` is edited between two runs on the same day. Verified:
+  dropping 3 of 5 and re-running restored exactly 5 with 3 polls.
+
+**`recommend.py` is the one stage that must not take the page down.** It runs
+after `sync_providers.py` (so a dead key or network aborts the run before
+anything is spent here), and both of its fetch loops stop on
+`CONSECUTIVE_FAILURE_LIMIT`, log loudly, keep whatever was already picked, and
+exit 0. Finding nothing is a legitimate outcome, not a failure — it means
+nothing TMDB suggested is on a subscribed service today.
+
+That promise is enforced in `sync.py`, not just intended: `STAGES` entries
+carry a third `required` field and `recommend` is the only `False`. Any exit
+code *or unhandled exception* from it is logged and stepped over, and `render`
+still runs. Guarding inside `recommend.py` alone would have covered only the
+failure modes already thought of — the point is to survive the ones that
+aren't. Verified both ways: a raising stage and a nonzero-exit stage each let
+the page render, while a failing *required* stage still stops the run with
+`docs/index.html` untouched.
+
+**`poll_log` is now shared between two writers**, and that had a sharp edge.
+`render.poll_dates()` took a bare `MAX(polled_on)` over the whole table, so a
+`recommend.py` run for a date `sync_providers.py` hadn't reached would become
+the page's "latest poll" and render a watchlist that polled nothing. Both of
+its queries are now scoped to rows for titles actually on a list
+(`render.POLLED_LIST_MEMBER`). The stage order already prevented this; the
+scope makes the page's dates independent of that ordering instead of quietly
+dependent on it. Every other watchlist/favorites read already joined its list
+table, so the counts, the new/gone diff, and the coverage banners were never
+exposed — verified, the first run's counts were byte-identical to the same
+day's run without the feature.
+
+`render.main()` re-filters picks against current membership before rendering,
+since a title can join the watchlist between the pick and a later hand-run of
+`render.py`; that also keeps the five dialog groups disjoint.
+
 **Filter by service**, added 2026-08-11: a pill row (`render.render_filter_bar()`)
 tapping "Netflix" and showing only Netflix titles across New/Watchlist
 streaming/Favorites streaming. Pure CSS — hidden radio inputs
@@ -483,6 +566,7 @@ Source changes are a separate, ordinary commit. `sync.py` does not commit code.
 
 1. ~~Resolver~~ — done. `resolver.py`.
 2. ~~Provider sync~~ — done. `sync_providers.py`.
+2b. ~~Recommendations~~ — done 2026-08-12. `recommend.py`.
 3. ~~Renderer~~ — done. `render.py`, plus `sync.py` to chain and publish.
 4. ~~launchd plist~~ — done. `install_launchd.py` generates and bootstraps it;
    `--uninstall` removes it.

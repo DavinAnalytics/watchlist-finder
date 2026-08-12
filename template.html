@@ -190,6 +190,13 @@
   .card-title { font-family: var(--font-heading); font-weight: 400; font-size: 1rem; }
   .row-card-off .card-title { font-family: var(--font-body); font-weight: 600; font-size: .875rem; }
   .card-meta { color: var(--dim); font-size: .8rem; margin-top: .15rem; }
+  /* The "Because you liked X" attribution on a recommendation card. Accent-
+     toned rather than --dim so it reads as the reason the row is there, not
+     as more metadata about the film itself. */
+  .card-because {
+    color: var(--accent); font-size: .76rem; margin-top: .2rem;
+    font-style: italic; opacity: .95;
+  }
 
   .tag-row { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .45rem; }
   .tag {
@@ -280,6 +287,9 @@ $filter_radios
   <h2>Watchlist streaming</h2>
   $section_streaming
   $section_watchlist_hidden
+
+  <h2>Recommended for you</h2>
+  $section_recommended
 
   <h2>Favorites streaming · rewatch</h2>
   $section_favorites

@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 import common
+import recommend
 import render
 import resolver
 import sync_providers
@@ -28,10 +29,24 @@ import sync_providers
 # hand-fixes unbacked-up.
 COMMIT_PATHS = ["docs/index.html", "data/resolved.json", "data/unresolved.txt"]
 
+# (name, entry point, required). A required stage that fails stops the run:
+# every one of them is something the page would otherwise lie about.
+#
+# "recommend" is the only optional stage. It runs after providers — a dead
+# network or key aborts above it, so nothing is spent picking recommendations
+# for a page that was never going to be published — and by the time it runs,
+# the watchlist page is already fully computed. Losing a whole day's page over
+# a bonus section would trade a small failure for a much bigger one, so any
+# exit code or unhandled exception from it is logged and stepped over.
+# recommend.py guards its own known failure modes; `required=False` is what
+# covers the unknown ones (a bug in this file's own logic, an unexpected TMDB
+# response shape), which is exactly where a blanket try/except inside
+# recommend.py would be least trustworthy.
 STAGES = [
-    ("resolver", resolver.main),
-    ("providers", sync_providers.main),
-    ("render", render.main),
+    ("resolver", resolver.main, True),
+    ("providers", sync_providers.main, True),
+    ("recommend", recommend.main, False),
+    ("render", render.main, True),
 ]
 
 
@@ -96,7 +111,7 @@ def main(argv=None):
     started = dt.datetime.now()
     logger.info("=== daily sync starting ===")
 
-    for name, stage in STAGES:
+    for name, stage, required in STAGES:
         try:
             code = stage([])
         except SystemExit as exc:
@@ -109,6 +124,13 @@ def main(argv=None):
             code = 1
 
         if code:
+            if not required:
+                # Loud in the log — this is still a fault, just not one worth
+                # withholding the whole page over.
+                logger.error(
+                    "stage %s failed (exit %s); continuing without it", name, code
+                )
+                continue
             logger.error(
                 "stopping after %s (exit %s); docs/index.html left untouched", name, code
             )

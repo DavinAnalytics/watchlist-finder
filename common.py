@@ -263,6 +263,15 @@ class TMDB:
     def watch_providers(self, tmdb_id):
         return self.get(f"/movie/{int(tmdb_id)}/watch/providers")
 
+    def recommendations(self, tmdb_id):
+        """TMDB's own "people who liked this also liked" list for one movie.
+
+        Page 1 only — 20 results, ordered by TMDB's relevance. recommend.py
+        never reads deep into this list, so paging would just spend calls on
+        candidates it will not reach.
+        """
+        return self.get(f"/movie/{int(tmdb_id)}/recommendations", language="en-US", page=1)
+
 
 def _retry_after(exc, attempt):
     header = exc.headers.get("Retry-After") if exc.headers else None
@@ -318,6 +327,19 @@ CREATE TABLE IF NOT EXISTS poll_log (
     polled_on DATE    NOT NULL,
     PRIMARY KEY (tmdb_id, polled_on)
 );
+
+-- The daily "Because you liked X" picks (recommend.py). Append-only, like
+-- availability: keeping the history is what lets a pick be excluded from the
+-- next fortnight's candidates instead of resurfacing every day. source_id is
+-- the favorite the pick came from, and is what the page's "Because you liked"
+-- line names. A new table rather than a new column, so CREATE TABLE IF NOT
+-- EXISTS is enough here and no _migrate() entry is needed.
+CREATE TABLE IF NOT EXISTS recommendations (
+    tmdb_id   INTEGER NOT NULL REFERENCES movies(tmdb_id),
+    source_id INTEGER NOT NULL REFERENCES movies(tmdb_id),
+    picked_on DATE    NOT NULL,
+    PRIMARY KEY (tmdb_id, picked_on)
+);
 """
 
 # TMDB provider names for the services actually subscribed to. Matching is on
@@ -370,6 +392,11 @@ FREE_KINDS = ("ads", "free")
 # bucket carries. No price is available on the free tier — never was, never
 # will be — this only ever shows *where*, not *how much*.
 RENT_BUY_KINDS = ("rent", "buy")
+# The kinds that can make a title count as "watchable" — a subscription, or
+# YouTube's free tier. Deliberately excludes RENT_BUY_KINDS: paying per title
+# is not the same as it being on something already subscribed to. Shared so
+# render.py and recommend.py can't drift on what "streaming" means.
+STREAMING_KINDS = (KIND_FLATRATE, *FREE_KINDS)
 
 # Ad-supported "free to watch" tiers, kept separate from SUBSCRIBED: these
 # aren't something paid for, they're free to anyone. TMDB lists them under the
