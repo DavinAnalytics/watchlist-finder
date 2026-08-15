@@ -581,7 +581,9 @@ tradeoff to know about if the page ever looks plain or image-less on bad wifi.
 - Write output to a temp file, then `os.replace()` into place. Never leave a
   half-written page.
 - Log every run with a timestamp and a movie count. A silently broken sync that
-  shows stale data forever is the failure mode to design against.
+  shows stale data forever is the failure mode to design against — including
+  when the break is on GitHub's side and every local step reported success.
+  See `verify_published()` under Git.
 - Read all paths from `.env` or `Path.home()`. Never hardcode `/Users/<name>/`
   — this is a public repo.
 - **One fault is one fault, not N.** Five consecutive API failures aborts the
@@ -616,14 +618,45 @@ files and `resolved.json` are the real data and should be versioned.
 If the TMDB key ever lands in a commit, don't rewrite history — revoke it in the
 TMDB dashboard and issue a new one.
 
-`sync.py` ends with add/commit/push. That's the only network write. It commits
-named files, never a directory — `docs/index.html`, `data/resolved.json`,
-`data/unresolved.txt`. `git add docs` would stage anything that ever lands in
-`docs/` and push it to a public repo. `resolved.json` rides along because it
-carries every hand-pinned id and GitHub is the backup; committing only the page
-would leave the repo permanently dirty and the hand-fixes unbacked-up.
+`sync.py` ends with add/commit/push, then *verifies the page actually went
+live*. The push is the only network write. It commits named files, never a
+directory — `docs/index.html`, `data/resolved.json`, `data/unresolved.txt`.
+`git add docs` would stage anything that ever lands in `docs/` and push it to a
+public repo. `resolved.json` rides along because it carries every hand-pinned
+id and GitHub is the backup; committing only the page would leave the repo
+permanently dirty and the hand-fixes unbacked-up.
 
 Source changes are a separate, ordinary commit. `sync.py` does not commit code.
+
+**A successful `git push` is not proof the page published.** On 2026-08-14 a
+push landed on `main` correctly — `raw.githubusercontent.com` served the new
+file — and GitHub queued **no Pages build for it at all**. The site kept
+serving a four-hour-old page while `git push` exited 0 and the run logged
+success. Nothing noticed; it was found by refreshing a phone. So
+`sync.publish()` is now followed by `sync.verify_published()`:
+
+- Polls the live Pages URL (up to `VERIFY_TIMEOUT`, 240s) for the exact
+  `<p class="stamp">` line of the page just written. That marker carries the
+  run's wall-clock minute, so it can't accidentally match a previously
+  deployed page the way a date-only marker could. The request is
+  cache-busted — GitHub's CDN serves `max-age=600`, long enough to make a
+  fresh deploy look like a failure.
+- On failure, pushes **one** empty commit to re-trigger the build (a later
+  real push is what unstuck it), waits again, and logs loudly either way.
+- Makes the run exit non-zero if the page never went live. Every stage can
+  succeed and the run still be a failure — the page is the point.
+- The Pages URL is derived from `git remote get-url origin` at runtime, never
+  written down: the no-hardcoded-user rule covers the account name too.
+- `--no-verify` skips it, for quick manual runs.
+
+**Do not "fix" the cancelled Pages builds.** That history shows a recurring
+pattern — a `watchlist: sync` build cancelled seconds before a `data:`/`feat:`
+build succeeds — which looks like a race and is not one. GitHub coalesces
+pushes that land within seconds, and in all four occurrences the surviving
+build published everything correctly. Batching the two pushes was proposed and
+rejected for this reason: the actual outage was a *dropped* build on a push
+that was already a single push. Chasing the cancellations would have shipped a
+fix for a non-problem while the real one stayed silent.
 
 ## Build order
 

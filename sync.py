@@ -12,14 +12,24 @@ nothing is pushed — so the page's own timestamp stays honest.
 
 import argparse
 import datetime as dt
+import re
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 import common
 import recommend
 import render
 import resolver
 import sync_providers
+
+# How long to wait for GitHub Pages to actually serve what was just pushed, and
+# how often to re-check. A Pages build normally lands in 30-90s.
+VERIFY_TIMEOUT = 240
+VERIFY_INTERVAL = 10
+VERIFY_NUDGE_TIMEOUT = 180
 
 # Named files, never a directory: `git add docs` would stage anything that ever
 # lands in docs/ — a debug dump, a stray export — and push it to a public repo.
@@ -101,10 +111,149 @@ def publish(logger, push=True):
     return True
 
 
+REMOTE_RE = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:)(?P<owner>[^/]+)/(?P<repo>.+?)(?:\.git)?$"
+)
+
+
+def pages_url():
+    """-> the GitHub Pages URL for this repo's origin, or None.
+
+    Derived from the remote at runtime rather than written down: CLAUDE.md
+    forbids hardcoding anything user-specific into a public repo, and that
+    applies to the owner's account name just as much as to /Users/<name>/.
+    """
+    remote = git("remote", "get-url", "origin", check=False)
+    if remote.returncode != 0:
+        return None
+    m = REMOTE_RE.match(remote.stdout.strip())
+    if not m:
+        return None
+    owner, repo = m.group("owner"), m.group("repo")
+    # A repo literally named <owner>.github.io is served at the domain root,
+    # not under a path segment.
+    if repo.casefold() == f"{owner.casefold()}.github.io":
+        return f"https://{owner.casefold()}.github.io/"
+    return f"https://{owner.casefold()}.github.io/{repo}/"
+
+
+STAMP_RE = re.compile(r'<p class="stamp">([^<]*)</p>')
+
+
+def local_stamp():
+    """-> the generated-at line from the page just written, or None.
+
+    This is the marker verify_published() looks for: it carries the run's
+    wall-clock minute, so it is different on every run and can't accidentally
+    match a previously deployed page the way a date-only marker could.
+    """
+    try:
+        text = common.OUTPUT_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = STAMP_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _serves_stamp(url, stamp, logger):
+    """-> True if the live page already carries `stamp`."""
+    # Cache-busting query: GitHub's CDN serves with max-age=600, so without
+    # this a fresh deploy can stay invisible here for ten minutes and the
+    # check would report a failure that isn't one.
+    bust = f"{url}?_={int(time.time())}"
+    req = urllib.request.Request(bust, headers={"User-Agent": common.USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=common.HTTP_TIMEOUT) as resp:
+            return stamp in resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        logger.warning("could not read %s: %s", url, exc)
+        return False
+
+
+def _wait_for(url, stamp, logger, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        if _serves_stamp(url, stamp, logger):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(VERIFY_INTERVAL)
+
+
+def verify_published(logger, nudge=True):
+    """Confirm GitHub Pages actually serves the page that was just pushed.
+
+    This exists because it demonstrably does not always happen. On 2026-08-14 a
+    push landed on main correctly — raw.githubusercontent.com served the new
+    file — and GitHub queued no Pages build for it at all, so the site kept
+    serving a four-hour-old page. `git push` had exited 0 and the run logged
+    success. Nothing in the pipeline noticed; it was found by refreshing a
+    phone. A push that reports success while the page silently stays stale is
+    exactly the failure this project is built against, so the push is no longer
+    treated as proof of publication.
+
+    Note this is deliberately *not* the "cancelled build" pattern also visible
+    in that history: GitHub cancels a Pages build when another push lands
+    seconds later, and every one of those was immediately followed by a
+    successful build of the newer commit. That coalescing is correct and needs
+    no handling. The dropped build is the real fault.
+
+    -> True if the live page matches. On failure, optionally pushes one empty
+    commit to re-trigger Pages (a later real push is what unstuck it last
+    time), then re-checks once.
+    """
+    url = pages_url()
+    stamp = local_stamp()
+    if not url:
+        logger.info("no github.com origin; skipping publish verification")
+        return True
+    if not stamp:
+        logger.warning("no timestamp found in %s; cannot verify", common.OUTPUT_PATH.name)
+        return True
+
+    logger.info("verifying %s serves this run (up to %ds)", url, VERIFY_TIMEOUT)
+    if _wait_for(url, stamp, logger, VERIFY_TIMEOUT):
+        logger.info("verified: the live page is this run's")
+        return True
+
+    logger.error(
+        "PAGE IS STALE: %s did not serve this run within %ds. The commit is "
+        "pushed and correct — this is GitHub Pages not publishing it.",
+        url, VERIFY_TIMEOUT,
+    )
+    if not nudge:
+        return False
+
+    logger.info("pushing an empty commit to re-trigger the Pages build")
+    try:
+        git("commit", "--allow-empty", "-m", "watchlist: re-trigger pages build")
+        pushed = git("push", check=False)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.error("could not push the re-trigger commit: %s", exc)
+        return False
+    if pushed.returncode != 0:
+        logger.error("re-trigger push failed: %s", (pushed.stderr or "").strip()[:300])
+        return False
+
+    if _wait_for(url, stamp, logger, VERIFY_NUDGE_TIMEOUT):
+        logger.info("verified after re-trigger: the live page is this run's")
+        return True
+    logger.error(
+        "STILL STALE after a re-trigger. Check the repo's Pages settings and "
+        "build history by hand; docs/index.html on main is correct."
+    )
+    return False
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-push", action="store_true", help="commit locally, don't push")
     ap.add_argument("--no-publish", action="store_true", help="skip git entirely")
+    ap.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="don't wait to confirm GitHub Pages served the new page",
+    )
     args = ap.parse_args(argv)
 
     logger = common.setup_logging("sync")
@@ -148,12 +297,21 @@ def main(argv=None):
             logger.error("publish failed: %s %s", exc, stderr.strip()[:300])
             return 1
 
+    # Only when something was actually pushed: there is nothing to verify after
+    # a run that published nothing (page unchanged) or one held local.
+    verified = None
+    if published and not args.no_push and not args.no_verify:
+        verified = verify_published(logger)
+
     logger.info(
-        "=== daily sync complete in %.1fs, published=%s ===",
+        "=== daily sync complete in %.1fs, published=%s, verified=%s ===",
         (dt.datetime.now() - started).total_seconds(),
         published,
+        verified,
     )
-    return 0
+    # A page that never went live is a failed run, even though every stage
+    # above it succeeded — the whole point of the run is the page.
+    return 0 if verified is not False else 1
 
 
 if __name__ == "__main__":
