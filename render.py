@@ -24,6 +24,7 @@ import random
 import re
 import string
 import sys
+import unicodedata
 import urllib.parse
 
 import common
@@ -209,6 +210,134 @@ def _slug(label):
     return re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")
 
 
+def _initial(title):
+    """-> the A–Z index bucket for a title: a single "a"-"z", or "#".
+
+    Deliberately derived from the *raw* title, the same basis sort_key() uses,
+    so a pill's contents match the order the page already shows: "The Rip"
+    sorts under T on the page, so it indexes under T too. Stripping a leading
+    article here (the way resolver.normalize() does for fuzzy matching) would
+    file it under R and leave the letter bar disagreeing with the list beneath
+    it, which is worse than either choice on its own.
+
+    Accents are folded first, so "Caché" indexes under C rather than becoming
+    its own bucket. Anything leading with a digit goes to "#", and so does a
+    title in a script with no a-z form — bucketed rather than dropped, since a
+    title that can't be found under any pill is exactly the failure a search
+    feature exists to prevent.
+    """
+    text = unicodedata.normalize("NFKD", str(title or ""))
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    for ch in text:
+        if ch.isdigit():
+            return "#"
+        # casefold() can return more than one character ("ß" -> "ss"); take the
+        # first so a bucket is always exactly one character wide.
+        lowered = ch.casefold()[:1]
+        if "a" <= lowered <= "z":
+            return lowered
+        if ch.isalpha():
+            return "#"
+    return "#"
+
+
+ALPHA_NUMERIC_SLUG = "num"  # "#" is not usable in an HTML id
+
+
+def _alpha_slug(letter):
+    return ALPHA_NUMERIC_SLUG if letter == "#" else letter
+
+
+def alpha_index(*groups):
+    """-> the sorted set of index buckets present across every group of ids.
+
+    Only letters that actually have a title get a pill, so the bar never
+    offers a dead option. "#" sorts to the end rather than to the front, where
+    ASCII would otherwise put it, since it reads as the leftover bucket.
+    """
+    letters = set()
+    for movies, ids in groups:
+        for tmdb_id in ids:
+            movie = movies.get(tmdb_id)
+            letters.add(_initial(movie["title"] if movie else ""))
+    return sorted(letters, key=lambda c: (c == "#", c))
+
+
+def render_alpha_radios(initials):
+    """Hidden radios for the A–Z bar. Same mechanism and placement rules as
+    render_filter_radios() — a separate radio *group* ("alpha"), so choosing a
+    letter doesn't reset the service filter and the two intersect instead."""
+    out = ['<input type="radio" name="alpha" id="alpha-all" class="filter-radio" checked>']
+    for letter in initials:
+        out.append(
+            f'<input type="radio" name="alpha" id="alpha-{_alpha_slug(letter)}" '
+            f'class="filter-radio">'
+        )
+    return "\n".join(out)
+
+
+def render_alpha_bar(initials):
+    if not initials:
+        return ""
+    pills = ['<label class="pill pill-alpha" for="alpha-all">All</label>']
+    for letter in initials:
+        pills.append(
+            f'<label class="pill pill-alpha" for="alpha-{_alpha_slug(letter)}">'
+            f"{esc(letter.upper())}</label>"
+        )
+    return f'<div class="filter-bar filter-bar-alpha">{"".join(pills)}</div>'
+
+
+def render_alpha_css(initials):
+    """The letter bar's CSS, generated rather than hand-written in
+    template.html.
+
+    The service filter's rules are hardcoded there and have to be checked
+    against _slug() by hand every time a service is added — a drift risk
+    CLAUDE.md calls out explicitly. There would be ~20 of these and the set
+    changes with the library, so they're emitted from the same values that
+    produce the markup and cannot fall out of step.
+
+    Two rules per bar, not one:
+
+    1. Hide every card whose bucket isn't the checked one. Unlike the service
+       filter this deliberately includes the dimmed "not currently streaming"
+       cards — over half the library lives in those collapsed blocks, and a
+       title search that couldn't reach them would miss most of the list.
+    2. Because of (1), hide the "(N)" in those blocks' summaries while any
+       letter is active. The count is emitted once, server-side, and states
+       the unfiltered total; leaving it visible next to a filtered list would
+       have the page assert a number contradicted by what's under it.
+    """
+    if not initials:
+        return ""
+    rules = []
+    for letter in initials:
+        rules.append(
+            f'#alpha-{_alpha_slug(letter)}:checked ~ main '
+            f'.row-card:not([data-initial="{letter}"]) {{ display: none; }}'
+        )
+    hide_counts = ",\n  ".join(
+        f"#alpha-{_alpha_slug(letter)}:checked ~ main .hidden-count" for letter in initials
+    )
+    rules.append(f"{hide_counts} {{ display: none; }}")
+
+    # Active-pill highlight, generated for the same reason as the rules above.
+    # Cosmetic only and :has()-based, exactly like the service pills': without
+    # :has() the index still filters correctly, the active letter just doesn't
+    # light up. "all" is included so the default state highlights too.
+    active = ",\n  ".join(
+        f'body:has(#alpha-{slug}:checked) label[for="alpha-{slug}"]'
+        for slug in ["all"] + [_alpha_slug(letter) for letter in initials]
+    )
+    rules.append(
+        f"{active} {{\n"
+        "    background: var(--accent); color: var(--bg); border-color: transparent;\n"
+        "  }"
+    )
+    return "\n  ".join(rules)
+
+
 def render_filter_radios():
     """Hidden radio inputs driving the service filter — see the CSS comment
     in template.html for the mechanism. These have to sit as a previous
@@ -280,6 +409,10 @@ def render_list(items, movies, empty_text, *, variant="on"):
 
         poster = poster_html(poster_path) if on else ""
 
+        # Drives the A–Z bar. On both variants, unlike data-services: the
+        # letter filter deliberately reaches into the collapsed lists.
+        initial_attr = f' data-initial="{esc(_initial(title))}"'
+
         tags_html = ""
         services_attr = ""
         if on and services:
@@ -291,8 +424,8 @@ def render_list(items, movies, empty_text, *, variant="on"):
             services_attr = f' data-services="{esc(slugs)}"'
 
         out.append(
-            f'<li><a class="{card_class}" href="#m{tmdb_id}"{services_attr}>{poster}'
-            f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
+            f'<li><a class="{card_class}" href="#m{tmdb_id}"{services_attr}{initial_attr}>'
+            f'{poster}<div class="row-info"><div class="card-title">{esc(title)}</div>'
             f"{meta_html}{tags_html}</div></a></li>"
         )
     out.append("</ul>")
@@ -343,7 +476,8 @@ def render_recommendations(items, movies, empty_text):
             services_attr = f' data-services="{esc(" ".join(_slug(s) for s in services))}"'
 
         out.append(
-            f'<li><a class="row-card elev-sm" href="#m{tmdb_id}"{services_attr}>'
+            f'<li><a class="row-card elev-sm" href="#m{tmdb_id}"{services_attr}'
+            f' data-initial="{esc(_initial(title))}">'
             f'{poster_html(movie["poster_path"] if movie else None)}'
             f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
             f"{meta_html}{because_html}{tags_html}</div></a></li>"
@@ -521,9 +655,12 @@ def render_details(summary, items, movies):
     """
     if not items:
         return ""
+    # The count is wrapped so the A–Z bar can hide it while filtering — it
+    # states the unfiltered total and would contradict the list under it.
+    # See render_alpha_css().
     return (
         f'<details class="hidden-list">\n'
-        f"<summary>{esc(summary)} ({len(items)})</summary>\n"
+        f'<summary>{esc(summary)} <span class="hidden-count">({len(items)})</span></summary>\n'
         f"{render_list(items, movies, '', variant='off')}\n"
         f"</details>"
     )
@@ -684,6 +821,13 @@ def main(argv=None):
         pick_id = tonight_pick(streaming, new, latest)
         hero_html = render_hero(pick_id, streaming.get(pick_id, []), movies)
 
+        # Built from exactly the ids that get a card, so every pill has at
+        # least one match and no title is unreachable from the bar.
+        initials = alpha_index(
+            (movies, streaming), (movies, watch_hidden), (movies, recommended),
+            (movies, fav_streaming), (movies, fav_hidden),
+        )
+
         key = sort_key(movies)
         prev_label = prev or "the last run"
         banners = []
@@ -715,8 +859,10 @@ def main(argv=None):
             ),
             stale_banner=banner,
             hero=hero_html,
-            filter_radios=render_filter_radios(),
+            filter_radios=render_filter_radios() + "\n" + render_alpha_radios(initials),
             filter_bar=render_filter_bar(),
+            alpha_bar=render_alpha_bar(initials),
+            alpha_css=render_alpha_css(initials),
             count_streaming=len(streaming),
             count_new=len(new),
             count_gone=len(gone),
