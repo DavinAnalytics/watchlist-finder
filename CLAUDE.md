@@ -87,18 +87,22 @@ search without it.
 ```sql
 movies(tmdb_id PK, title, year, runtime, poster_path,
        overview, director, genres, vote_average, vote_count,
-       top_cast, trailer_key, status, release_date, certification)
+       top_cast, trailer_key, status, release_date, certification,
+       similar_count)
 favorites(tmdb_id FK)
 watchlist(tmdb_id FK, added_at)
 availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 recommendations(tmdb_id FK, source_id FK, picked_on DATE)
+similar(tmdb_id FK, similar_id, title, year, poster_path, rank)
 ```
 
-All ten non-original columns were added 2026-08-10/11, after `movies` already
+Ten of the eleven non-original columns were added 2026-08-10/11, after `movies` already
 had 67 rows, in four passes for the detail dialog: `poster_path` first, then
 `overview`/`director`/`genres`/`vote_average`/`vote_count`, then `top_cast`/
-`trailer_key`/`status`/`release_date`, then `certification`. `CREATE TABLE IF
+`trailer_key`/`status`/`release_date`, then `certification`. The eleventh,
+`similar_count`, followed on 2026-08-16 for the dialog's "More like this" row
+(104 rows by then). `CREATE TABLE IF
 NOT EXISTS` can't add a column to a table that already exists, so
 `common.connect()` runs a small migration after the schema script —
 `PRAGMA table_info`, then `ALTER TABLE ... ADD COLUMN` for whatever's missing.
@@ -143,7 +147,13 @@ then a `Teaser` as a last resort, YouTube only — see `resolver._trailer_key()`
 for why the full video list has to be scanned rather than assuming a trailer
 comes first (it doesn't, reliably). `certification` (the US content rating —
 "R", "PG-13", ...) comes the same way, via `release_dates` added to the same
-`append_to_response` — three query params total now, still one API call.
+`append_to_response` — and `recommendations` joined them on 2026-08-16 for the
+dialog's "More like this" row: four query params total now, still one API
+call. That last one is worth noting as a cost that never appeared — the
+obvious build would have been a `/movie/{id}/recommendations` call per title,
+77 extra requests a run forever; appending it to a request already being made
+made the whole feature free, and it returns the identical page-1/20-result
+payload the standalone endpoint does.
 TMDB carries a separate release_dates entry per release event (festival,
 premiere, theatrical, digital, physical) and the rating isn't reliably
 attached to any particular one, so `resolver._certification()` takes the
@@ -167,6 +177,36 @@ last `RECENT_DAYS` (14). Without it, a title several favorites all recommend
 would win every day and the section would never change. It was added as a new
 *table*, so `CREATE TABLE IF NOT EXISTS` covers both a fresh db and the
 existing one — no `_migrate()` entry, unlike the eleven added columns above.
+
+`similar` (2026-08-16) is the one table here that is **not** append-only, and
+is deliberately the opposite of `recommendations` on every axis:
+
+- **It is replaced, not appended.** `upsert_movie()` deletes a title's rows
+  and rewrites them. Every other history in this schema exists because
+  something reads the *past* — "new since yesterday", "don't re-pick for a
+  fortnight". Nothing reads a past state of this list, so keeping one would
+  only let a title TMDB has since dropped keep surfacing forever.
+- **`similar_id` carries no foreign key**, unlike every other `tmdb_id`
+  column. These are explicitly titles *not* on either list — that's the whole
+  point of a discovery row — and `PRAGMA foreign_keys` is ON, so a FK would
+  make the insert fail for exactly the rows the feature exists to store.
+  `title`/`year`/`poster_path` are denormalized for the same reason: there is
+  no `movies` row to join to, and fetching one per suggestion would cost
+  ~1500 API calls a run instead of zero.
+- **Nothing is filtered on the way in.** The table is a faithful cache of what
+  TMDB returned; which entries the page shows is decided at render time. This
+  is the reverse of `recommend.py`'s `MIN_YEAR`, and the difference is not
+  stylistic: there, rejecting a candidate early saves a real provider poll, so
+  filtering at collection has a cost to save. Here every stored candidate is
+  free, so filtering early would only bake a reversible display choice into
+  the data and force a re-fetch to undo.
+
+`similar_count` on `movies` is what makes the backfill work: it is the
+"fetched, empty" marker for a table rather than a column, exactly as `""`
+serves `overview`/`trailer_key`. NULL means never fetched, `0` means fetched
+and TMDB had nothing. Without it the short-circuit would have to test "has
+`similar` rows", and any title with genuinely no recommendations would
+re-fetch every run forever.
 
 Membership in `favorites` and `watchlist` is decided by the text files and only
 by the text files. Never let the success of an API call decide whether a row
@@ -309,6 +349,39 @@ free API doesn't expose (same day, same schema additions — see Schema).
 Every field a title might legitimately be missing (mid-backfill, or TMDB
 genuinely has nothing) degrades to just not showing that line, not a blank
 or a crash.
+
+**"More like this"**, added 2026-08-16: a horizontally scrolling strip of
+five TMDB recommendations at the bottom of every dialog, poster + title +
+year. Five *at random* from a pool of up to 20, seeded by poll date and
+tmdb_id together — so they rotate daily but hold still across repeat renders
+of the same day, the same contract `tonight_pick()` has, and two titles never
+draw correlated positions from their pools. `random.sample()` over the whole
+pool rather than the top five, or TMDB's relevance order would pin the same
+five forever and make the daily rotation invisible.
+
+Two filters, both at render time (`render.similar_snapshot()`): a
+`SIMILAR_MIN_YEAR` of 1990, mirroring the owner's standing rule for
+`recommend.py`, and anything already on the watchlist or favorites — a
+"discovery" row suggesting something already listed is a wasted slot, and it
+would link out to TMDB for a title with a perfectly good dialog two taps
+away. A candidate with no year is dropped, same reasoning as
+`recommend.candidates_for()`: unknown is not the same as recent. Live, those
+two filters take 1526 cached rows to 1243 eligible, and every one of the 77
+titles still clears five.
+
+The tiles link to TMDB, not to `#m{id}`: these titles are on neither list, so
+no dialog exists for them and an internal link would silently do nothing.
+
+Cost is the part worth remembering. Zero API calls (see `append_to_response`
+under Schema), and over the wire the page went 32KB → 50KB gzipped — the raw
+HTML roughly doubles, but that number is not the one that matters. The ~380
+extra posters cost *no* requests at all until a dialog is opened: they sit
+inside `.dialog-target { display: none }` and carry `loading="lazy"`, and
+browsers don't fetch images in a display:none subtree.
+
+A recommendation pick stored before this shipped has `similar_count` NULL and
+renders with no strip until the next day's picks are chosen — correct
+degradation, self-healing, not worth spending calls to force.
 
 The tag row shows the real service list, or "not currently streaming" — except
 for a title that hasn't released yet, which gets "Releases {date}" instead

@@ -92,7 +92,7 @@ def resolve_one(tmdb, raw, year, logger):
 
 BACKFILL_COLUMNS = (
     "runtime", "poster_path", "overview", "director", "genres", "vote_average", "vote_count",
-    "top_cast", "trailer_key", "status", "release_date", "certification",
+    "top_cast", "trailer_key", "status", "release_date", "certification", "similar_count",
 )
 ALL_COLUMNS = ("tmdb_id", "title", "year") + BACKFILL_COLUMNS
 
@@ -168,12 +168,43 @@ def _certification(details):
     return ""
 
 
+def _similar_entries(details):
+    """-> [(similar_id, title, year, poster_path, rank)] for the "More like
+    this" pool, read off the appended recommendations payload.
+
+    rank preserves TMDB's own relevance order. The page picks five at random
+    rather than taking the top five, so rank isn't what decides what shows —
+    but storing the list unordered would throw away the only quality signal
+    TMDB gives, and it costs one integer to keep.
+
+    Skips anything without an int id or a usable title, and anything flagged
+    adult: unlike the rest of the pipeline these titles were never vetted by
+    appearing on a hand-written list, so this is the only gate they pass
+    through. Nothing else is filtered here — see the `similar` table comment
+    in common.py for why the year floor lives at render time instead.
+    """
+    results = (details.get("recommendations") or {}).get("results") or []
+    out = []
+    for entry in results:
+        if not isinstance(entry, dict) or entry.get("adult"):
+            continue
+        similar_id = entry.get("id")
+        title = entry.get("title") or entry.get("original_title") or ""
+        if not isinstance(similar_id, int) or isinstance(similar_id, bool) or not title:
+            continue
+        out.append(
+            (similar_id, title, release_year(entry), entry.get("poster_path"), len(out))
+        )
+    return out
+
+
 def upsert_movie(conn, tmdb, tmdb_id, logger):
     """Fill in the movies row. Details are fetched once per id and then left
     alone — except that a row missing any of BACKFILL_COLUMNS (grows as
-    fields get added, all on 2026-08-10/11: poster_path, then overview/
-    director/genres/vote_average/vote_count, then top_cast/trailer_key/
-    status/release_date, then certification) gets one more fetch to backfill
+    fields get added: poster_path, then overview/director/genres/
+    vote_average/vote_count, then top_cast/trailer_key/status/release_date,
+    then certification, all on 2026-08-10/11, then similar_count on
+    2026-08-16) gets one more fetch to backfill
     what's missing, and except that a row whose status isn't in
     SETTLED_STATUSES keeps re-fetching every run regardless of what's already
     filled in — see SETTLED_STATUSES for why status/release_date can't join
@@ -222,6 +253,7 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
 
     date = (details.get("release_date") or "")
     genres = ", ".join(g["name"] for g in details.get("genres") or [] if g.get("name"))
+    similar = _similar_entries(details)
     values = {
         "tmdb_id": tmdb_id,
         "title": details.get("title") or details.get("original_title") or f"tmdb:{tmdb_id}",
@@ -245,6 +277,12 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
         "status": details.get("status") or "",
         "release_date": date,
         "certification": _certification(details),
+        # 0, never NULL, on a real fetch — same "fetched, empty" vs "never
+        # fetched" distinction the string fields above make. A title TMDB has
+        # no recommendations for genuinely exists (obscure and unreleased ones
+        # especially), and leaving this NULL would fail the BACKFILL_COLUMNS
+        # check and re-fetch that title every single run, forever.
+        "similar_count": len(similar),
     }
 
     # Built from ALL_COLUMNS rather than three hand-written, hand-counted SQL
@@ -262,6 +300,20 @@ def upsert_movie(conn, tmdb, tmdb_id, logger):
         f"INSERT INTO movies ({cols}) VALUES ({placeholders}) "
         f"ON CONFLICT(tmdb_id) DO UPDATE SET {updates}",
         tuple(values[c] for c in ALL_COLUMNS),
+    )
+
+    # Replace, not append. Every other history in this schema (availability,
+    # poll_log, recommendations) is append-only because the history is itself
+    # the feature — it's what "new since yesterday" and "don't re-pick for a
+    # fortnight" are computed from. Nothing reads a *past* state of this list,
+    # so keeping one would only let a title TMDB has since dropped keep
+    # surfacing forever. Must run after the movies upsert above: similar.tmdb_id
+    # is a real foreign key and PRAGMA foreign_keys is ON.
+    conn.execute("DELETE FROM similar WHERE tmdb_id = ?", (tmdb_id,))
+    conn.executemany(
+        "INSERT INTO similar (tmdb_id, similar_id, title, year, poster_path, rank) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(tmdb_id, sid, t, y, p, r) for sid, t, y, p, r in similar],
     )
     return True
 

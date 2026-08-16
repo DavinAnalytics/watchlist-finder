@@ -250,14 +250,19 @@ class TMDB:
         )
 
     def movie(self, tmdb_id):
-        # append_to_response bundles credits, videos and release_dates into
-        # this same request — director/cast from credits, the trailer from
-        # videos, the US certification from release_dates. Without this it
-        # would take three more calls per movie.
+        # append_to_response bundles credits, videos, release_dates and
+        # recommendations into this same request — director/cast from
+        # credits, the trailer from videos, the US certification from
+        # release_dates, and the dialog's "More like this" list from
+        # recommendations. Without this it would take four more calls per
+        # movie. recommendations joined the list on 2026-08-16 and cost
+        # nothing: it is one more query param on a call already being made,
+        # not a fifth request, and it returns the same page-1/20-result
+        # payload the standalone endpoint does.
         return self.get(
             f"/movie/{int(tmdb_id)}",
             language="en-US",
-            append_to_response="credits,videos,release_dates",
+            append_to_response="credits,videos,release_dates,recommendations",
         )
 
     def watch_providers(self, tmdb_id):
@@ -299,7 +304,8 @@ CREATE TABLE IF NOT EXISTS movies (
     trailer_key   TEXT,
     status        TEXT,
     release_date  TEXT,
-    certification TEXT
+    certification TEXT,
+    similar_count INTEGER
 );
 CREATE TABLE IF NOT EXISTS favorites (
     tmdb_id INTEGER PRIMARY KEY REFERENCES movies(tmdb_id)
@@ -339,6 +345,37 @@ CREATE TABLE IF NOT EXISTS recommendations (
     source_id INTEGER NOT NULL REFERENCES movies(tmdb_id),
     picked_on DATE    NOT NULL,
     PRIMARY KEY (tmdb_id, picked_on)
+);
+
+-- The dialog's "More like this" pool (2026-08-16): TMDB's recommendations for
+-- one movie, cached so the page can show five of them without a daily fetch.
+--
+-- similar_id deliberately carries NO foreign key to movies. Every other
+-- tmdb_id column here references a title on one of the two lists; these are
+-- explicitly titles that are not, and never will be unless hand-added. A FK
+-- would make the insert fail for exactly the discovery suggestions that are
+-- the entire point of the feature.
+--
+-- title/year/poster_path are denormalized for that same reason — there is no
+-- movies row to join to, and re-fetching 20 detail records per title to fill
+-- one would cost ~1500 API calls a run. The recommendations payload already
+-- carries all three, so they are simply stored as they arrive.
+--
+-- Nothing here is filtered on the way in: this is a faithful cache of what
+-- TMDB returned, and which of them the page actually shows (a year floor,
+-- excluding titles already on a list) is decided at render time. That is the
+-- opposite of recommend.py's MIN_YEAR, which is applied at collection —
+-- there a rejected candidate saves a real provider poll, so filtering early
+-- has a cost to save. Here every candidate is free once the row exists, so
+-- filtering early would only bake a reversible display choice into the data.
+CREATE TABLE IF NOT EXISTS similar (
+    tmdb_id     INTEGER NOT NULL REFERENCES movies(tmdb_id),
+    similar_id  INTEGER NOT NULL,
+    title       TEXT    NOT NULL,
+    year        INTEGER,
+    poster_path TEXT,
+    rank        INTEGER NOT NULL,
+    PRIMARY KEY (tmdb_id, similar_id)
 );
 """
 
@@ -478,6 +515,7 @@ def _migrate(conn):
         "status": "TEXT",
         "release_date": "TEXT",
         "certification": "TEXT",
+        "similar_count": "INTEGER",
     }
     changed = False
     for name, sql_type in additions.items():

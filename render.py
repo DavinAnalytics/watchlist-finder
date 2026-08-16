@@ -31,6 +31,15 @@ import common
 
 MIN_POLL_COVERAGE = 0.9  # below this share of the watchlist, say so on the page
 
+# "More like this" inside each detail dialog. SIMILAR_MIN_YEAR mirrors
+# recommend.MIN_YEAR — the owner's standing "nothing before the 1990s" — but is
+# deliberately a separate constant applied here rather than at collection time:
+# the stored pool is a faithful cache of TMDB's list, so changing this number
+# re-renders instantly with no re-fetch. recommend.py can't do that, because
+# there a rejected candidate saves a real provider poll.
+SIMILAR_SHOWN = 5
+SIMILAR_MIN_YEAR = 1990
+
 
 # poll_log is shared: sync_providers.py writes a row per list title per day,
 # and recommend.py writes one per candidate it polls — and candidates are on
@@ -128,6 +137,71 @@ def rentable_snapshot(conn, on):
     for row in rows:
         snap.setdefault(row["tmdb_id"], set()).add(row["provider"])
     return {k: sorted(v) for k, v in snap.items()}
+
+
+def similar_snapshot(conn):
+    """-> {tmdb_id: [(similar_id, title, year, poster_path), ...]} eligible for
+    the dialog's "More like this" row.
+
+    Not date-scoped, unlike every other snapshot here: this is a cache of
+    TMDB's recommendations for a title, refreshed whenever resolver.py
+    re-fetches that title, not a daily observation. There is no poll_log
+    equivalent to reason about and nothing to diff.
+
+    Two filters, both applied here rather than at collection (see the `similar`
+    table comment in common.py):
+
+    * SIMILAR_MIN_YEAR, matching the owner's standing rule for recommend.py.
+    * Titles already on the watchlist or favorites. The point of this row is
+      discovery, so a suggestion the owner has already listed is a wasted slot
+      — and worse, it would link out to TMDB for a title that has a perfectly
+      good dialog of its own two taps away.
+
+    A title with no usable year is dropped rather than kept: TMDB not carrying
+    a release date is not evidence the film clears the floor, and the pool is
+    large enough (20 per title) to afford discarding the ambiguous ones. Same
+    reasoning as recommend.candidates_for().
+    """
+    listed = {
+        r["tmdb_id"]
+        for r in conn.execute(
+            "SELECT tmdb_id FROM watchlist UNION SELECT tmdb_id FROM favorites"
+        )
+    }
+    rows = conn.execute(
+        "SELECT tmdb_id, similar_id, title, year, poster_path FROM similar "
+        "WHERE year IS NOT NULL AND year >= ? ORDER BY tmdb_id, rank",
+        (SIMILAR_MIN_YEAR,),
+    ).fetchall()
+
+    pool = {}
+    for row in rows:
+        if row["similar_id"] in listed:
+            continue
+        pool.setdefault(row["tmdb_id"], []).append(
+            (row["similar_id"], row["title"], row["year"], row["poster_path"])
+        )
+    return pool
+
+
+def pick_similar(pool, tmdb_id, latest):
+    """-> up to SIMILAR_SHOWN entries for one title, chosen at random.
+
+    Seeded by the poll date and the title, the same way tonight_pick() is: the
+    five rotate daily but stay put across repeat renders on the same day, so
+    re-running render.py by hand doesn't reshuffle every dialog on the page.
+    Including tmdb_id in the seed keeps two different titles from drawing
+    correlated positions out of their respective pools.
+
+    random.sample() over the whole pool, not the top five — TMDB's ordering is
+    a relevance ranking, so taking the head would show the same five forever
+    and make the daily reshuffle invisible for any title with a pool larger
+    than five.
+    """
+    entries = pool.get(tmdb_id) or []
+    if len(entries) <= SIMILAR_SHOWN:
+        return entries
+    return random.Random(f"similar:{latest}:{tmdb_id}").sample(entries, SIMILAR_SHOWN)
 
 
 def recommendation_snapshot(conn, on):
@@ -519,7 +593,33 @@ def release_badge(status, release_date):
     return f'<span class="tag tag-upcoming">Releases {esc(when.strftime("%b %-d, %Y"))}</span>'
 
 
-def render_dialogs(items, movies, rentable=None):
+def render_similar(entries):
+    """-> the "More like this" block for one dialog, or "" when empty.
+
+    Each tile links to TMDB rather than to a #m{id} dialog: these titles are on
+    neither list, so no dialog exists for them and an internal link would
+    silently do nothing. Empty degrades to showing nothing at all, like every
+    other optional line in the dialog — a title mid-backfill, or one TMDB has
+    no recommendations for, just doesn't get the section.
+    """
+    if not entries:
+        return ""
+    tiles = []
+    for similar_id, title, year, poster_path in entries:
+        url = f"https://www.themoviedb.org/movie/{int(similar_id)}"
+        meta = f'<div class="similar-year">{esc(year)}</div>' if year else ""
+        tiles.append(
+            f'<a class="similar-tile" href="{esc(url)}">'
+            f"{poster_html(poster_path, css_class='poster similar-poster', width=68, height=102)}"
+            f'<div class="similar-title">{esc(title)}</div>{meta}</a>'
+        )
+    return (
+        '<div class="similar-block"><div class="similar-head">More like this</div>'
+        f'<div class="similar-grid">{"".join(tiles)}</div></div>'
+    )
+
+
+def render_dialogs(items, movies, rentable=None, similar=None, latest=None):
     """One collapsed detail overlay per unique tmdb_id, revealed by CSS
     :target when its row is tapped. `items`: {tmdb_id: [services]}, already
     deduped by the caller — dict keys can't collide by construction, so a
@@ -545,6 +645,7 @@ def render_dialogs(items, movies, rentable=None):
     if not items:
         return ""
     rentable = rentable or {}
+    similar = similar or {}
 
     out = []
     for tmdb_id, services in sorted(items.items()):
@@ -626,6 +727,7 @@ def render_dialogs(items, movies, rentable=None):
             height=126,
         )
         tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}"
+        similar_html = render_similar(pick_similar(similar, tmdb_id, latest))
 
         out.append(
             f'<div id="m{tmdb_id}" class="dialog-target">'
@@ -640,6 +742,7 @@ def render_dialogs(items, movies, rentable=None):
             f'<div class="tag-row">{tags_html}</div>'
             f"{rentable_html}"
             f"{overview_html}"
+            f"{similar_html}"
             f'<p class="dialog-link">{trailer_html}<a href="{esc(tmdb_url)}">'
             f"Full cast, reviews, and rental prices on TMDB →</a></p>"
             f"</div></div>"
@@ -760,6 +863,7 @@ def main(argv=None):
         today = snapshot(conn, latest)
         yesterday = snapshot(conn, prev) if prev else {}
         rentable = rentable_snapshot(conn, latest)
+        similar = similar_snapshot(conn)
 
         streaming = {i: s for i, s in today.items() if s}
 
@@ -892,7 +996,7 @@ def main(argv=None):
             footer=esc(
                 f"{len(today)} of {watchlist_size} watchlist titles polled on {latest}"
             ),
-            dialogs=render_dialogs(dialog_items, movies, rentable),
+            dialogs=render_dialogs(dialog_items, movies, rentable, similar, latest),
         )
     finally:
         conn.close()
