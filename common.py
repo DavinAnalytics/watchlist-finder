@@ -544,13 +544,23 @@ SERVICE_COLORS = {
 }
 TAG_FALLBACK = "#8a8478"
 
-# Owned tags get one colour regardless of store, deliberately unlike
-# SERVICE_COLORS. A subscription tag answers "which service is carrying this
-# right now"; an owned tag answers "you already paid for this", and that second
-# fact is the same fact whichever storefront it was bought from. One colour
-# also means a store the owner adds to owned.txt tomorrow needs no code change
-# to look right — the same reasoning that keeps availability storing every
-# provider and filtering at render.
+# An owned tag takes the colour of the service that storefront belongs to
+# (owner's call, 2026-08-18): "Owned · Amazon Prime" reads in Prime Video's
+# blue, "Owned · YouTube" in YouTube's yellow. Scanning the page, the eye
+# groups by *where the film lives* before it reads the words, and a film
+# bought on Prime and a film streaming on Prime are the same errand.
+#
+# Derived from SERVICE_COLORS rather than repeating the hex, so a service
+# colour and its owned counterpart can never drift apart.
+STORE_COLORS = {
+    "Amazon Prime": SERVICE_COLORS["Prime Video"],
+    "YouTube": SERVICE_COLORS["YouTube (free)"],
+}
+
+# Fallback for a store with no SERVICE_COLORS counterpart — a storefront that
+# isn't also a subscription (Apple TV Store, Google Play) has no colour to
+# borrow. Keeps the "a store added to owned.txt tomorrow needs no code change
+# to look right" property that a bare KeyError would lose.
 OWNED_COLOR = "#b5793a"
 
 
@@ -576,7 +586,7 @@ def tag_color(label):
     if label in SERVICE_COLORS:
         return SERVICE_COLORS[label]
     if label.startswith(OWNED_PREFIX):
-        return OWNED_COLOR
+        return STORE_COLORS.get(label[len(OWNED_PREFIX):], OWNED_COLOR)
     return TAG_FALLBACK
 
 

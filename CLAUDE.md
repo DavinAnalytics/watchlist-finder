@@ -639,11 +639,20 @@ Prime`), sit in the streaming sections rather than the collapsed ones, and
 are counted in the summary's streaming figure so the number can't contradict
 the list beneath it.
 
-`common.OWNED_COLOR` is one colour for every store, deliberately unlike
-`SERVICE_COLORS`. A service tag answers "which service is carrying this right
-now"; an owned tag answers "you already paid for this", and that second fact
-is the same fact whichever storefront it came from. One colour also means a
-store added to `owned.txt` tomorrow needs no code change to look right.
+**An owned tag takes the colour of the service that storefront belongs to**
+(owner's call, same day, replacing a single shared owned colour): `Owned ·
+Amazon Prime` renders in Prime Video's blue, `Owned · YouTube` in YouTube's
+yellow. Scanning the page, the eye groups by *where the film lives* before it
+reads the words, and a film bought on Prime and a film streaming on Prime are
+the same errand.
+
+`common.STORE_COLORS` derives those values from `SERVICE_COLORS` rather than
+repeating the hex, so a service colour and its owned counterpart cannot drift
+apart. `common.OWNED_COLOR` survives as the fallback for a storefront with no
+subscription counterpart to borrow from (Apple TV Store, Google Play) —
+without it, a store added to `owned.txt` tomorrow would be a `KeyError`
+instead of just rendering in the neutral tone.
+
 `common.tag_color()` is the single lookup for services, owned tags and
 anything unrecognised, so a caller can't colour one kind correctly and
 silently fall back on another.
