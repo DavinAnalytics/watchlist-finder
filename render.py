@@ -139,6 +139,46 @@ def rentable_snapshot(conn, on):
     return {k: sorted(v) for k, v in snap.items()}
 
 
+def owned_snapshot(conn):
+    """-> {tmdb_id: [tag label, ...]} for every film owned outright.
+
+    Not date-scoped, unlike snapshot()/rentable_snapshot(): ownership is not an
+    observation of what a service is carrying today, it is a standing fact from
+    owned.txt. That difference is the whole reason this is a separate read
+    rather than more rows in `availability` — putting it there would make owned
+    films participate in the new/gone diff, and a film would go "new" the day
+    it was typed into the text file and "gone" the day it was removed, neither
+    of which is a change in what any service is doing.
+    """
+    rows = conn.execute("SELECT tmdb_id, store FROM owned ORDER BY store").fetchall()
+    out = {}
+    for row in rows:
+        out.setdefault(row["tmdb_id"], []).append(common.owned_label(row["store"]))
+    return out
+
+
+def merge_owned(services_by_id, owned, *, ids=None):
+    """-> a copy of `services_by_id` with owned tags appended.
+
+    `ids` optionally widens the result to titles that have no availability row
+    at all — an owned film on no subscribed service has nothing in the snapshot
+    to merge into, and is exactly the case this feature exists for. Without it,
+    a film sitting in a personal library would still be filed under "not
+    currently streaming", which is the flavour of confidently-wrong this
+    project keeps designing against.
+
+    The caller passes a *copy* target deliberately: the poll-derived snapshot
+    stays untouched so the new/gone diff and the coverage banners keep counting
+    only what was actually polled.
+    """
+    merged = {i: list(services) for i, services in services_by_id.items()}
+    for tmdb_id in ids if ids is not None else list(merged):
+        if tmdb_id in owned:
+            merged.setdefault(tmdb_id, [])
+            merged[tmdb_id] = merged[tmdb_id] + owned[tmdb_id]
+    return merged
+
+
 def similar_snapshot(conn):
     """-> {tmdb_id: [(similar_id, title, year, poster_path), ...]} eligible for
     the dialog's "More like this" row.
@@ -271,7 +311,7 @@ def tag_chips(services):
         return '<span class="tag tag-neutral">Not currently streaming</span>'
     chips = []
     for s in services:
-        color = common.SERVICE_COLORS.get(s, common.TAG_FALLBACK)
+        color = common.tag_color(s)
         chips.append(
             f'<span class="tag" style="--tag-color:{esc(color)}">'
             f'<span class="tag-dot"></span>{esc(s)}</span>'
@@ -412,7 +452,47 @@ def render_alpha_css(initials):
     return "\n  ".join(rules)
 
 
-def render_filter_radios():
+def owned_stores(conn):
+    """-> sorted store names that actually have at least one owned title.
+
+    Read from the table rather than a constant so a store the owner adds to
+    owned.txt needs no code change to get a pill — and so a store whose last
+    title was sold back stops offering a filter that would match nothing.
+    """
+    return sorted({r["store"] for r in conn.execute("SELECT DISTINCT store FROM owned")})
+
+
+def render_owned_css(stores):
+    """The service filter's CSS is hand-written in template.html against
+    hardcoded slugs, carrying a standing "these must match _slug() exactly"
+    hazard. Owned pills are generated instead, for the same reason the A–Z
+    rules are: the set is data, not a fixed list, so the rules and the markup
+    come from one source and cannot drift apart.
+    """
+    if not stores:
+        return ""
+    slugs = [_slug(common.owned_label(s)) for s in stores]
+    rules = [
+        f'#filter-{slug}:checked ~ main .row-card:not(.row-card-off)'
+        f':not([data-services~="{slug}"]) {{ display: none; }}'
+        for slug in slugs
+    ]
+    # Active-pill highlight, matching what template.html does for the service
+    # pills. Cosmetic and :has()-based: without :has() support the filter still
+    # works, the pill just doesn't light up.
+    active = ",\n  ".join(
+        f'body:has(#filter-{slug}:checked) label[for="filter-{slug}"]' for slug in slugs
+    )
+    rules.append(
+        f"{active} {{\n"
+        f"    background: color-mix(in srgb, var(--tag-color) 85%, var(--bg));\n"
+        f"    color: color-mix(in srgb, var(--tag-color) 20%, white);\n"
+        f"    border-color: transparent;\n  }}"
+    )
+    return "\n".join(rules)
+
+
+def render_filter_radios(stores=()):
     """Hidden radio inputs driving the service filter — see the CSS comment
     in template.html for the mechanism. These have to sit as a previous
     sibling of <main>, not inside it: the "~" combinator only reaches
@@ -420,25 +500,27 @@ def render_filter_radios():
     in the document the label itself lives, so the visible pills can stay
     inside <main> while these stay outside it, out of the way visually.
     """
+    labels = list(common.SERVICE_COLORS) + [common.owned_label(s) for s in stores]
     ids = ['<input type="radio" name="filter" id="filter-all" class="filter-radio" checked>']
-    for label in common.SERVICE_COLORS:
+    for label in labels:
         ids.append(
             f'<input type="radio" name="filter" id="filter-{_slug(label)}" class="filter-radio">'
         )
     return "\n".join(ids)
 
 
-def render_filter_bar():
+def render_filter_bar(stores=()):
     """The visible pill row. One pill per common.SERVICE_COLORS entry — the
-    same six labels a tag can ever actually show, so there's never a filter
-    option that couldn't possibly match anything.
+    same labels a tag can ever actually show, so there's never a filter
+    option that couldn't possibly match anything — followed by one per store
+    that actually owns something.
     """
+    labels = list(common.SERVICE_COLORS) + [common.owned_label(s) for s in stores]
     pills = ['<label class="pill" for="filter-all">All</label>']
-    for label in common.SERVICE_COLORS:
-        color = common.SERVICE_COLORS[label]
+    for label in labels:
         pills.append(
             f'<label class="pill" for="filter-{_slug(label)}" '
-            f'style="--tag-color:{esc(color)}">{esc(label)}</label>'
+            f'style="--tag-color:{esc(common.tag_color(label))}">{esc(label)}</label>'
         )
     return f'<div class="filter-bar">{"".join(pills)}</div>'
 
@@ -886,18 +968,30 @@ def main(argv=None):
         # watchlist-only, and anything already on the watchlist is excluded
         # here so it can't appear twice on the page.
         fav_today = snapshot(conn, latest, "favorites")
-        fav_streaming = {i: s for i, s in fav_today.items() if s and i not in today}
+
+        # Owned films join the page only from here down — after new/gone were
+        # computed from `today`/`yesterday` above, and after len(today) is
+        # fixed for the coverage banner. Ownership is a standing fact, not a
+        # daily observation, so it must never make a title "new" or "gone".
+        owned = owned_snapshot(conn)
+        stores = owned_stores(conn)
+        watch_members = members(conn, "watchlist")
+        fav_members = members(conn, "favorites")
+        streaming = merge_owned(streaming, owned, ids=watch_members)
+        fav_today = merge_owned(fav_today, owned, ids=fav_members)
+
+        # Excluded on *membership*, not on the watchlist snapshot: `today` only
+        # holds ids that were actually polled, so a watchlist title whose fetch
+        # failed used to be able to appear here and in watch_hidden at once.
+        fav_streaming = {i: s for i, s in fav_today.items() if s and i not in watch_members}
 
         # Everything not currently streaming, collapsed rather than dropped. A
         # title silently missing from the page reads as "not on the list"; the
         # counts here are what make the page feel complete instead of thin.
         # Membership drives these, not the poll, so a title that failed its
         # fetch still appears rather than vanishing.
-        watch_hidden = {i: [] for i in members(conn, "watchlist") - set(streaming)}
-        fav_hidden = {
-            i: []
-            for i in members(conn, "favorites") - set(fav_streaming) - members(conn, "watchlist")
-        }
+        watch_hidden = {i: [] for i in watch_members - set(streaming)}
+        fav_hidden = {i: [] for i in fav_members - set(fav_streaming) - watch_members}
 
         # Today's "Because you liked X" picks. recommend.py already excluded
         # everything on either list when it chose them, but that was a
@@ -963,10 +1057,10 @@ def main(argv=None):
             ),
             stale_banner=banner,
             hero=hero_html,
-            filter_radios=render_filter_radios() + "\n" + render_alpha_radios(initials),
-            filter_bar=render_filter_bar(),
+            filter_radios=render_filter_radios(stores) + "\n" + render_alpha_radios(initials),
+            filter_bar=render_filter_bar(stores),
             alpha_bar=render_alpha_bar(initials),
-            alpha_css=render_alpha_css(initials),
+            alpha_css=render_alpha_css(initials) + "\n" + render_owned_css(stores),
             count_streaming=len(streaming),
             count_new=len(new),
             count_gone=len(gone),

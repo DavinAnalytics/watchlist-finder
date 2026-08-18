@@ -39,6 +39,7 @@ watchlist/
 ├── data/
 │   ├── favorites.txt      # year-grouped, exported from Apple Notes
 │   ├── watchlist.txt      # things to watch; edited by hand or by Claude Code
+│   ├── owned.txt          # films bought outright, grouped by store
 │   ├── resolved.json      # raw input string -> tmdb_id cache
 │   ├── unresolved.txt     # titles that need a human
 │   └── movies.db          # SQLite (gitignored, regenerable)
@@ -82,6 +83,38 @@ The year matters: it's passed to TMDB search and is what disambiguates
 "Blade Runner" under 2017 (*Blade Runner 2049*) from the 1982 film. Never
 search without it.
 
+A line starting with `#` is a comment, in all three files (added 2026-08-18
+with `owned.txt`, which needs a header explaining its own format to whoever
+edits it next). No film title in any list starts with one.
+
+`owned.txt` (2026-08-18) adds one dimension on top of that format: a
+`[Store]` line sets the current store the way a bare year line sets the
+current year.
+
+```
+[Amazon Prime]
+
+1999
+Fight Club
+
+[YouTube]
+
+1999
+The Matrix
+```
+
+A new `[Store]` **resets the year to None**. Without that, the first titles
+under a store would silently inherit the previous store's last year, and a
+wrong year is a wrong TMDB search — the one failure this format exists to
+prevent. A title before any store line is skipped and logged, exactly as one
+before any year line is: ownership with no store attached can't be displayed,
+and guessing the store would invent a fact about where the film actually is.
+
+`common.parse_owned()` is a separate function from `parse_entries()`, not a
+flag on it, specifically because the return shape differs (three-tuples, not
+two) — a caller that forgot to unpack the third value would otherwise get a
+silent mis-assignment instead of an error.
+
 ## Schema
 
 ```sql
@@ -95,6 +128,7 @@ availability(tmdb_id FK, provider, kind, seen_on DATE)
 poll_log(tmdb_id FK, polled_on DATE)
 recommendations(tmdb_id FK, source_id FK, picked_on DATE)
 similar(tmdb_id FK, similar_id, title, year, poster_path, rank)
+owned(tmdb_id FK, store)
 ```
 
 Ten of the eleven non-original columns were added 2026-08-10/11, after `movies` already
@@ -207,6 +241,27 @@ serves `overview`/`trailer_key`. NULL means never fetched, `0` means fetched
 and TMDB had nothing. Without it the short-circuit would have to test "has
 `similar` rows", and any title with genuinely no recommendations would
 re-fetch every run forever.
+
+**`owned` (2026-08-18) is the one kind of availability TMDB cannot know.**
+`/watch/providers` reports what a *service* is carrying; it has no idea what
+sits in a personal library. So `owned` mirrors `owned.txt` and only
+`owned.txt`, under the same contract as `favorites`/`watchlist` — an API
+call's success must never decide whether a row survives — with the row key
+one dimension wider, `(tmdb_id, store)`, because the same film can be bought
+on more than one store and the page names where. *Alien: Covenant* is
+currently the live case, owned on both Amazon Prime and YouTube.
+
+The important consequence: **owned is not date-scoped and must never enter
+the poll/diff machinery.** An owned film is owned every day until the text
+file says otherwise. If ownership were written into `availability` instead, a
+film would go "new" the day it was typed into the text file and "gone" the
+day it was deleted — neither of which is a change in what any service is
+doing, and both of which would be a lie in the one section of the page whose
+whole value is that it only reports real changes. `render.merge_owned()`
+therefore runs *after* new/gone are computed and after `len(today)` is fixed
+for the coverage banner, and it returns a copy rather than mutating the
+poll-derived snapshot. All four of those properties are worth re-verifying if
+that code is ever touched; they were verified when it shipped.
 
 Membership in `favorites` and `watchlist` is decided by the text files and only
 by the text files. Never let the success of an API call decide whether a row
@@ -576,6 +631,28 @@ day's run without the feature.
 since a title can join the watchlist between the pick and a later hand-run of
 `render.py`; that also keeps the five dialog groups disjoint.
 
+**Owned films count as watchable**, added 2026-08-18. A film sitting in a
+personal library is *more* reliably available than one on Netflix, which can
+leave — so filing it under "not currently streaming" was the page stating
+something confidently false. Owned titles now get a tag (`Owned · Amazon
+Prime`), sit in the streaming sections rather than the collapsed ones, and
+are counted in the summary's streaming figure so the number can't contradict
+the list beneath it.
+
+`common.OWNED_COLOR` is one colour for every store, deliberately unlike
+`SERVICE_COLORS`. A service tag answers "which service is carrying this right
+now"; an owned tag answers "you already paid for this", and that second fact
+is the same fact whichever storefront it came from. One colour also means a
+store added to `owned.txt` tomorrow needs no code change to look right.
+`common.tag_color()` is the single lookup for services, owned tags and
+anything unrecognised, so a caller can't colour one kind correctly and
+silently fall back on another.
+
+The word "streaming" in those section headers is now doing slightly loose
+duty — an owned film isn't streaming — but the tag says so on every row, and
+the alternative (a fourth count, or sections that disagree with their own
+counts) is worse on a phone.
+
 **Filter by service**, added 2026-08-11: a pill row (`render.render_filter_bar()`)
 tapping "Netflix" and showing only Netflix titles across New/Watchlist
 streaming/Favorites streaming. Pure CSS — hidden radio inputs
@@ -584,7 +661,13 @@ before `<main>`, so the `~` sibling combinator can reach in and hide any
 `.row-card` whose `data-services` attribute doesn't contain the checked
 service's slug (`render._slug()` — must stay in sync with the hardcoded
 slugs in template.html's filter CSS, verified against each other, not just
-assumed). The counts at the top stay fixed at their true unfiltered totals;
+assumed). Owned stores join the same pill row, but their rules are
+**generated** by `render.render_owned_css()` rather than hand-written —
+stores are user data, not a fixed list, so the slug-drift hazard the service
+rules carry is removed outright the same way `render_alpha_css()` removes it.
+`render.owned_stores()` reads the distinct stores from the table, so a store
+whose last title was sold back stops offering a pill that matches nothing.
+The counts at the top stay fixed at their true unfiltered totals;
 recomputing them per filter isn't something CSS can do. Collapsed "not
 currently streaming" sections are untouched by the filter on purpose — they
 carry no service tag to filter by, and hiding some of a `<details>` whose

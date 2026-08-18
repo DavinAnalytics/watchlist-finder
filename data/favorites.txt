@@ -1,10 +1,27 @@
 Movies
 
+1980
+The Shining
+
+1994
+Pulp Fiction
+
+1997
+The Game
+
+1999
+Fight Club
+The Blair Witch Project
+The Thirteenth Floor
+The Matrix
+
 2000
 American Psycho
+Memento
 
 2002
 Minority Report
+28 Days Later
 
 2004
 Eternal Sunshine of the Spotless Mind
@@ -21,6 +38,8 @@ Wanted
 
 2009
 Push
+Brothers
+Inglourious Basterds
 
 2010
 Inception
@@ -28,6 +47,7 @@ Shutter Island
 
 2011
 The Thing
+Source Code
 
 2012
 Argo
@@ -36,6 +56,7 @@ Looper
 Prometheus
 21 jump street
 Dredd
+The Raid: Redemption
 
 2013
 Wolf of wallstreet
@@ -54,6 +75,7 @@ Enemy
 2015
 Mad Max
 Martian
+Ex Machina
 
 2016
 Arrival
@@ -71,6 +93,8 @@ Alien Covenant
 Super dark times
 Brawl in cell block
 Jungle
+Atomic Blonde
+Split
 
 2018
 A quiet place

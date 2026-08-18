@@ -63,6 +63,7 @@ DATA_DIR = DIR / "data"
 DOCS_DIR = DIR / "docs"
 FAVORITES_PATH = DATA_DIR / "favorites.txt"
 WATCHLIST_PATH = DATA_DIR / "watchlist.txt"
+OWNED_PATH = DATA_DIR / "owned.txt"
 RESOLVED_PATH = DATA_DIR / "resolved.json"
 UNRESOLVED_PATH = DATA_DIR / "unresolved.txt"
 DB_PATH = DATA_DIR / "movies.db"
@@ -142,6 +143,11 @@ def save_json(path, data):
 # --- input parsing -----------------------------------------------------------
 
 YEAR_RE = re.compile(r"^\d{4}$")
+# "[Amazon Prime]" in owned.txt. Anchored and non-greedy about nothing — a
+# real film title starting with "[" and ending with "]" would be misread as a
+# store, which is a trade accepted for a format that has to stay hand-editable
+# on a phone.
+STORE_RE = re.compile(r"^\[(.+)\]$")
 
 
 def parse_entries(path, logger=None):
@@ -149,7 +155,10 @@ def parse_entries(path, logger=None):
 
     A bare 4-digit line sets the current year; every other non-blank line is a
     film under it. Lines appearing before any year line are skipped and logged
-    (the Apple Notes export starts with a 'Movies' header).
+    (the Apple Notes export starts with a 'Movies' header). A line starting
+    with '#' is a comment — no film title in either list starts with one, and
+    owned.txt needs a header explaining its own format to whoever edits it
+    next.
     """
     path = Path(path)
     if not path.exists():
@@ -161,7 +170,7 @@ def parse_entries(path, logger=None):
     year = None
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         raw = line.strip()
-        if not raw:
+        if not raw or raw.startswith("#"):
             continue
         if YEAR_RE.match(raw):
             year = int(raw)
@@ -171,6 +180,52 @@ def parse_entries(path, logger=None):
                 logger.info("%s:%d: skipping %r before any year line", path.name, lineno, raw)
             continue
         entries.append((raw, year))
+    return entries
+
+
+def parse_owned(path, logger=None):
+    """owned.txt -> [(raw_title, year, store)].
+
+    parse_entries() plus a store dimension: a "[Store]" line sets the current
+    store the way a bare year line sets the current year. Kept as its own
+    function rather than a flag on parse_entries() because the return shape
+    differs — a caller that forgot to unpack three values would otherwise get
+    a silent mis-assignment rather than an error.
+
+    A title before any store line is skipped and logged, exactly as one before
+    any year line is: ownership with no store attached can't be displayed and
+    guessing a store would invent a fact about where the film actually is.
+    """
+    path = Path(path)
+    if not path.exists():
+        if logger:
+            logger.warning("input file missing: %s", path)
+        return []
+
+    entries = []
+    year = None
+    store = None
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        match = STORE_RE.match(raw)
+        if match:
+            store = match.group(1).strip()
+            # A new store restarts the year grouping. Without this, the first
+            # titles under a store would silently inherit the previous store's
+            # last year — a wrong year is a wrong TMDB search.
+            year = None
+            continue
+        if YEAR_RE.match(raw):
+            year = int(raw)
+            continue
+        if store is None or year is None:
+            if logger:
+                missing = "store" if store is None else "year"
+                logger.info("%s:%d: skipping %r before any %s line", path.name, lineno, raw, missing)
+            continue
+        entries.append((raw, year, store))
     return entries
 
 
@@ -347,6 +402,25 @@ CREATE TABLE IF NOT EXISTS recommendations (
     PRIMARY KEY (tmdb_id, picked_on)
 );
 
+-- Films owned outright, per store (2026-08-18). Mirrors owned.txt and only
+-- owned.txt, exactly as favorites/watchlist mirror their own files — an API
+-- call's success must never decide whether a row here survives.
+--
+-- Ownership is the one kind of availability TMDB cannot know: /watch/providers
+-- reports what a *service* carries, never what a person bought. So this table
+-- is not derived from `availability` and is not date-scoped — an owned film is
+-- owned every day until the text file says otherwise, which is exactly why it
+-- can't be folded into the poll/diff machinery. It never makes a title "new"
+-- and never makes one "gone".
+--
+-- (tmdb_id, store) rather than tmdb_id alone: the same film can be bought on
+-- more than one store, and the page names where.
+CREATE TABLE IF NOT EXISTS owned (
+    tmdb_id INTEGER NOT NULL REFERENCES movies(tmdb_id),
+    store   TEXT    NOT NULL,
+    PRIMARY KEY (tmdb_id, store)
+);
+
 -- The dialog's "More like this" pool (2026-08-16): TMDB's recommendations for
 -- one movie, cached so the page can show five of them without a daily fetch.
 --
@@ -469,6 +543,41 @@ SERVICE_COLORS = {
     "YouTube (free)": "#c9a227",
 }
 TAG_FALLBACK = "#8a8478"
+
+# Owned tags get one colour regardless of store, deliberately unlike
+# SERVICE_COLORS. A subscription tag answers "which service is carrying this
+# right now"; an owned tag answers "you already paid for this", and that second
+# fact is the same fact whichever storefront it was bought from. One colour
+# also means a store the owner adds to owned.txt tomorrow needs no code change
+# to look right — the same reasoning that keeps availability storing every
+# provider and filtering at render.
+OWNED_COLOR = "#b5793a"
+
+
+def owned_label(store):
+    """-> the tag text for a film owned on `store`.
+
+    "Owned · Netflix" would be a lie waiting to happen, so the word stays
+    first: the tag is primarily a claim about ownership, and the store is the
+    qualifier telling you where to go open it.
+    """
+    return f"Owned · {store}"
+
+
+OWNED_PREFIX = "Owned · "
+
+
+def tag_color(label):
+    """-> the swatch colour for any tag label the page can show.
+
+    One lookup for services, owned tags and anything unrecognised, so a caller
+    can't colour one kind correctly and silently fall back on another.
+    """
+    if label in SERVICE_COLORS:
+        return SERVICE_COLORS[label]
+    if label.startswith(OWNED_PREFIX):
+        return OWNED_COLOR
+    return TAG_FALLBACK
 
 
 def free_tier_for(provider_name):

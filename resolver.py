@@ -375,6 +375,25 @@ def main(argv=None):
         entries[name] = common.parse_entries(path, logger)
         logger.info("parsed %d entries from %s", len(entries[name]), path.name)
 
+    # owned.txt is a third source but not a third list: it decorates titles
+    # with where they were bought, and never decides what appears on the page.
+    # Its titles still go through the same resolution pass and the same
+    # resolved.json cache, so an owned film that is on neither list still gets
+    # a real tmdb_id rather than a second, private id space.
+    readable["owned"] = common.OWNED_PATH.exists()
+    if not readable["owned"]:
+        logger.error(
+            "input file missing, leaving owned table untouched: %s", common.OWNED_PATH
+        )
+    owned_entries = common.parse_owned(common.OWNED_PATH, logger)
+    entries["owned"] = [(raw, year) for raw, year, _ in owned_entries]
+    logger.info(
+        "parsed %d entries from %s across %d stores",
+        len(owned_entries),
+        common.OWNED_PATH.name,
+        len({store for _, _, store in owned_entries}),
+    )
+
     if args.dry_run:
         for name, items in entries.items():
             for raw, year in items:
@@ -386,7 +405,7 @@ def main(argv=None):
     tmdb = common.TMDB(common.api_key(), logger)
 
     unresolved = []  # (list_name, raw, year, reason)
-    membership = {"favorites": [], "watchlist": []}
+    membership = {"favorites": [], "watchlist": [], "owned": []}
     searched = 0
     consecutive_failures = 0
     finished_pass = False
@@ -483,11 +502,26 @@ def main(argv=None):
     fav_ids = sorted(set(membership["favorites"]))
     watch_ids = sorted(set(membership["watchlist"]))
 
+    # (tmdb_id, store) pairs, rebuilt from the cache rather than collected
+    # during the loop above: that loop yields ids in encounter order with no
+    # store attached, and zipping the two back together would silently
+    # mis-attribute a film to the wrong store the first time a title failed to
+    # resolve and shifted the sequence. Looking each raw string up by key
+    # cannot drift that way. An entry still unresolved is simply absent.
+    owned_rows = sorted(
+        {
+            (resolved[raw.strip()], store)
+            for raw, _, store in owned_entries
+            if raw.strip() in resolved
+        }
+    )
+    owned_ids = {i for i, _ in owned_rows}
+
     conn = common.connect()
     try:
         with conn:
             known = set()
-            for tmdb_id in sorted(set(fav_ids) | set(watch_ids)):
+            for tmdb_id in sorted(set(fav_ids) | set(watch_ids) | owned_ids):
                 try:
                     if upsert_movie(conn, tmdb, tmdb_id, logger):
                         known.add(tmdb_id)
@@ -533,19 +567,42 @@ def main(argv=None):
                     "ON CONFLICT(tmdb_id) DO NOTHING",
                     [(i, today) for i in sorted(keep & known)],
                 )
+
+            if readable["owned"]:
+                # Same contract as the two lists above, one dimension wider:
+                # the row key is (tmdb_id, store), so selling back a film on
+                # one store while keeping it on another removes exactly one
+                # row. `known` gates inserts only — never deletes — so a flaky
+                # detail fetch can't quietly drop ownership of a film the text
+                # file still lists.
+                keep_rows = set(owned_rows)
+                current_rows = {
+                    (r["tmdb_id"], r["store"])
+                    for r in conn.execute("SELECT tmdb_id, store FROM owned")
+                }
+                conn.executemany(
+                    "DELETE FROM owned WHERE tmdb_id = ? AND store = ?",
+                    sorted(current_rows - keep_rows),
+                )
+                conn.executemany(
+                    "INSERT INTO owned (tmdb_id, store) VALUES (?, ?) "
+                    "ON CONFLICT(tmdb_id, store) DO NOTHING",
+                    [(i, s) for i, s in owned_rows if i in known],
+                )
     finally:
         conn.close()
 
     elapsed = (dt.datetime.now() - started).total_seconds()
     logger.info(
         "run complete in %.1fs: %d searched, %d newly resolved, %d unresolved, "
-        "%d favorites, %d watchlist",
+        "%d favorites, %d watchlist, %d owned",
         elapsed,
         searched,
         len(resolved) - before,
         len(unresolved),
         len(fav_ids),
         len(watch_ids),
+        len(owned_rows),
     )
     return 0
 

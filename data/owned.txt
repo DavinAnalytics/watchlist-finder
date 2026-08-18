@@ -1,0 +1,88 @@
+# Films owned outright, grouped by store.
+#
+# Ownership is not availability. TMDB has no idea what sits in a personal
+# library, so this file is the only source of truth for it — maintained by
+# hand, exactly like favorites.txt and watchlist.txt.
+#
+# A [Store] line sets the current store; a bare 4-digit line sets the current
+# year, same as the other two lists. A title may appear under more than one
+# store (buy it twice, own it twice) and under both a store here and a list
+# there — everything dedupes on tmdb_id, never on the title string.
+
+[Amazon Prime]
+
+1980
+The Shining
+
+1994
+Pulp Fiction
+
+1997
+The Game
+
+1999
+Fight Club
+The Blair Witch Project
+The Thirteenth Floor
+
+2000
+Memento
+
+2002
+28 Days Later
+
+2004
+Eternal Sunshine of the Spotless Mind
+
+2007
+Sunshine
+
+2009
+Inglourious Basterds
+
+2011
+Source Code
+
+2012
+The Raid: Redemption
+
+2013
+Prisoners
+
+2015
+Ex Machina
+The Martian
+
+2017
+Blade Runner 2049
+Alien Covenant
+
+2018
+Overlord
+Annihilation
+
+2019
+Midsommar
+Parasite
+
+2020
+Tenet
+
+[YouTube]
+
+1999
+The Matrix
+
+2013
+Her
+
+2014
+Interstellar
+
+2017
+Atomic Blonde
+Split
+Alien Covenant
+
+2022
+Bullet Train
