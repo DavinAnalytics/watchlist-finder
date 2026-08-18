@@ -3,6 +3,15 @@ Movies
 2000
 American Psycho
 
+2002
+Minority Report
+
+2004
+Eternal Sunshine of the Spotless Mind
+
+2005
+War of the Worlds
+
 2007
 Sunshine
 No Country for Old Men
@@ -17,12 +26,16 @@ Push
 Inception
 Shutter Island
 
+2011
+The Thing
+
 2012
 Argo
 Django
 Looper
 Prometheus
 21 jump street
+Dredd
 
 2013
 Wolf of wallstreet
