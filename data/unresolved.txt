@@ -1,4 +1,4 @@
 # Titles TMDB could not resolve confidently. Fix by adding the correct
 # id to data/resolved.json by hand, keyed on the exact raw string below.
-# regenerated 2026-08-18T15:54:14
+# regenerated 2026-08-19T04:00:02
 
