@@ -474,20 +474,43 @@ SUBSCRIBED = {
 
 
 def subscription_for(provider_name):
-    """-> the subscribed service this TMDB provider name is, or None."""
+    """-> the subscribed service this TMDB provider name is, or None.
+
+    Matches a needle as a **prefix**, not anywhere in the string. TMDB names a
+    reseller entry "<content service> <reseller> Channel" — "Paramount+ Amazon
+    Channel", "Starz Apple TV channel", "HBO Max Amazon Channel" — so the
+    catalog a title actually sits in is always the leading name. Reading the
+    prefix answers the only question that matters here ("is this title in the
+    catalog of something I already pay for?") and gets both cases right at
+    once:
+
+      "Paramount+ Amazon Channel"  -> Paramount+   (subscribed; countable)
+      "Starz Apple TV channel"     -> None         (Starz isn't subscribed —
+                                                    and, crucially, this is
+                                                    not Apple TV+ either)
+
+    This replaced a blanket `"channel" in name` rejection on 2026-08-25, after
+    the owner noticed Strange Darling reading as not-streaming while sitting on
+    Paramount+. The old guard threw away every reseller row, including ones
+    whose content service *is* subscribed, so a title TMDB happened to list
+    only under a channel became invisible. Evidence for the change, measured
+    against the live table rather than assumed: of the 14 titles then carrying
+    a direct Paramount+ row, 14 also carried a channel row and 0 carried only a
+    direct row — the channel catalogs mirror the real one. The two titles
+    carrying only channel rows (Strange Darling, 10 Cloverfield Lane) were
+    TMDB data gaps, one of them confirmed by hand on the actual service.
+
+    The "store" guard stays: "Apple TV Store" is a rent/buy storefront and
+    would otherwise prefix-match the "apple tv" needle. It is global rather
+    than per-service, so a future SUBSCRIBED entry whose real flatrate name
+    contains "store" would silently never match — check new needles against it,
+    the same way "hbo max"/"apple tv" were confirmed live rather than assumed.
+    """
     name = (provider_name or "").strip().casefold()
-    # "store" excludes "Apple TV Store" (a rent/buy storefront, unrelated to
-    # the Apple TV+ subscription) from the "apple tv" needle above — the same
-    # kind of false-positive "channel" already guards against for resellers.
-    # Both guards are global, not per-service: adding a future SUBSCRIBED
-    # entry whose real flatrate name happens to contain "channel" or "store"
-    # would silently never match anything. Check new needles against both
-    # before adding them, the same way "hbo max"/"apple tv" were confirmed
-    # live against the real API rather than assumed.
-    if not name or "channel" in name or "store" in name:
+    if not name or "store" in name:
         return None
     for service, needles in SUBSCRIBED.items():
-        if any(n in name for n in needles):
+        if any(name.startswith(n) for n in needles):
             return service
     return None
 

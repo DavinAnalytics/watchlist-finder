@@ -330,15 +330,53 @@ at render time through `common.subscription_for()`. Changing which services
 are subscribed to then costs nothing and needs no re-fetch. The corollary is a
 rule: every read of `availability` goes through `subscription_for()`. TMDB
 ships variants ("Netflix Standard with Ads", "Paramount Plus Essential") that
-must match, and reseller add-ons ("Paramount+ Amazon Channel", "Starz Apple TV
-Channel") that must not — they are separate paid subscriptions, not the
-service. `subscription_for()`'s exclusion guard also checks for `"store"`, not
-just `"channel"` — added alongside Apple TV+, since TMDB's raw name for that
-subscription is bare `"Apple TV"`, a substring of the unrelated rent/buy
-storefront `"Apple TV Store"` that would otherwise false-match. TMDB's raw
+must match.
+
+**Needles match as a prefix, not a substring** — changed 2026-08-25, replacing
+a blanket `"channel" in name` rejection. TMDB names a reseller entry
+`<content service> <reseller> Channel`, so the catalog a title actually sits
+in is always the *leading* name, and reading the prefix answers the only
+question that matters ("is this in the catalog of something already paid
+for?"):
+
+```
+"Paramount+ Amazon Channel"  -> Paramount+   subscribed, so it counts
+"Starz Apple TV channel"     -> None         Starz isn't subscribed — and
+                                             this is not Apple TV+ either
+```
+
+The old rule got the second case right and the first case wrong, throwing away
+every reseller row including ones whose content service *is* subscribed. The
+symptom: *Strange Darling* read as "not currently streaming" while sitting on
+Paramount+, because TMDB listed it only under the Amazon and Roku channels and
+never under a direct entry. Found by the owner on the actual service, not by
+the pipeline.
+
+The evidence for the change was measured against the live table, not assumed:
+of the 14 titles then carrying a direct Paramount+ row, **14 also carried a
+channel row and 0 carried only a direct row** — the channel catalogs mirror
+the real one, so a channel-only listing is a TMDB data gap rather than a
+genuinely different catalog. Exactly four names changed classification across
+all 74 ever stored (`Paramount+ Amazon Channel`, `Paramount+ Roku Premium
+Channel`, `HBO Max Amazon Channel`, `Apple TV Amazon Channel`), and every
+unsubscribed reseller — Starz, Cinemax, AMC+, Shudder, MGM+ — was re-verified
+as still excluded. Re-run that diff if the needles are ever touched.
+
+The `"store"` guard stays, and is now the only global exclusion:
+TMDB's raw name for Apple TV+ is bare `"Apple TV"`, which would otherwise
+prefix-match the unrelated rent/buy storefront `"Apple TV Store"`. TMDB's raw
 name for Max is `"HBO Max"`, never bare `"Max"` — that needle would also
 catch `"Cinemax"`. Both raw names were confirmed live against real API
 responses before being hardcoded, not assumed from memory.
+
+**Known, unhandled: Paramount+ Essential vs Premium.** TMDB emits these as
+separate provider names and `subscription_for()` maps both to `Paramount+`.
+Measured 2026-08-25: Essential is an exact subset of Premium (12 titles on
+both, 0 Essential-only, 2 Premium-only). So the collapse is harmless *on a
+Premium subscription* and would produce false positives on Essential — the
+worse direction of error, since it sends you to a title that isn't there.
+Left as-is deliberately, because the owner is on Premium. If that ever
+changes, split the needles rather than widening them.
 
 **YouTube's free-with-ads tier counts as streaming too**, added 2026-08-10 on
 request. TMDB lists it under the `ads`/`free` kinds, not `flatrate` — a
