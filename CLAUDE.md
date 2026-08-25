@@ -345,22 +345,12 @@ for?"):
                                              this is not Apple TV+ either
 ```
 
-The old rule got the second case right and the first case wrong, throwing away
-every reseller row including ones whose content service *is* subscribed. The
-symptom: *Strange Darling* read as "not currently streaming" while sitting on
-Paramount+, because TMDB listed it only under the Amazon and Roku channels and
-never under a direct entry. Found by the owner on the actual service, not by
-the pipeline.
+This buys the untiered services: `HBO Max Amazon Channel` and `Apple TV
+Amazon Channel` are those catalogs and now resolve correctly, where the old
+blanket rule discarded them.
 
-The evidence for the change was measured against the live table, not assumed:
-of the 14 titles then carrying a direct Paramount+ row, **14 also carried a
-channel row and 0 carried only a direct row** — the channel catalogs mirror
-the real one, so a channel-only listing is a TMDB data gap rather than a
-genuinely different catalog. Exactly four names changed classification across
-all 74 ever stored (`Paramount+ Amazon Channel`, `Paramount+ Roku Premium
-Channel`, `HBO Max Amazon Channel`, `Apple TV Amazon Channel`), and every
-unsubscribed reseller — Starz, Cinemax, AMC+, Shudder, MGM+ — was re-verified
-as still excluded. Re-run that diff if the needles are ever touched.
+**But a reseller entry proves the content service, never the tier** — and
+that distinction is what the Paramount+ rule below turns on.
 
 The `"store"` guard stays, and is now the only global exclusion:
 TMDB's raw name for Apple TV+ is bare `"Apple TV"`, which would otherwise
@@ -369,14 +359,38 @@ name for Max is `"HBO Max"`, never bare `"Max"` — that needle would also
 catch `"Cinemax"`. Both raw names were confirmed live against real API
 responses before being hardcoded, not assumed from memory.
 
-**Known, unhandled: Paramount+ Essential vs Premium.** TMDB emits these as
-separate provider names and `subscription_for()` maps both to `Paramount+`.
-Measured 2026-08-25: Essential is an exact subset of Premium (12 titles on
-both, 0 Essential-only, 2 Premium-only). So the collapse is harmless *on a
-Premium subscription* and would produce false positives on Essential — the
-worse direction of error, since it sends you to a title that isn't there.
-Left as-is deliberately, because the owner is on Premium. If that ever
-changes, split the needles rather than widening them.
+**Paramount+ is tiered, and the tiers are not cosmetic.** TMDB emits
+`Paramount Plus Essential` and `Paramount Plus Premium` as separate provider
+names, and Premium genuinely carries titles Essential does not. Measured
+2026-08-25 against the live table: Essential is an exact subset of Premium —
+12 on both, **0 Essential-only, 3 Premium-only** (*Baby Driver*, *Bleed for
+This*, *The Autopsy of Jane Doe*).
+
+The owner is on Essential, so the needle is the narrow
+`"paramount plus essential"` and nothing else. **To move to Premium, add
+`"paramount plus premium"` to that tuple — nothing else changes.**
+
+This deliberately excludes `Paramount+ Amazon Channel` and `Paramount+ Roku
+Premium Channel`, which is worth recording because the opposite was tried and
+reverted within the hour on 2026-08-25:
+
+- The owner reported *Strange Darling* showing as not-streaming while *The
+  Autopsy of Jane Doe* showed as available, both being Paramount+ titles.
+- First diagnosis: the channel rows were being discarded, and a channel-only
+  listing was a TMDB data gap. The supporting measurement looked strong — 14
+  of 14 direct-Paramount titles also carried a channel row, 0 carried only a
+  direct row. The needles were widened and both titles began showing.
+- That was **wrong**, and the report itself contained the answer: the owner
+  had said both titles were *Premium-tier*, and they were on Essential. The
+  right outcome was for both to drop off, not for both to appear.
+- The measurement that settles it: `Paramount+ Amazon Channel` appears on
+  **12/12 Essential titles and 3/3 Premium-only titles**. It is tier-blind
+  and cannot establish Essential availability for anything.
+
+The general lesson, not the Paramount-specific one: a co-occurrence statistic
+("every direct title also has a channel row") says nothing about the cases
+with *no* direct row, which were the only cases in question. Confirming the
+rule on the titles that already worked was never going to test it.
 
 **YouTube's free-with-ads tier counts as streaming too**, added 2026-08-10 on
 request. TMDB lists it under the `ads`/`free` kinds, not `flatrate` — a

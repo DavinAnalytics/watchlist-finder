@@ -462,7 +462,28 @@ SUBSCRIBED = {
     "Hulu": ("hulu",),
     "Peacock": ("peacock",),
     "Prime Video": ("amazon prime video", "prime video"),
-    "Paramount+": ("paramount plus", "paramount+"),
+    # Paramount+ is the one *tiered* service here, and the tiers are not
+    # cosmetic: TMDB emits "Paramount Plus Essential" and "Paramount Plus
+    # Premium" as separate provider names, and Premium genuinely carries
+    # titles Essential does not. Measured 2026-08-25 against the live table:
+    # Essential is an exact subset of Premium — 12 titles on both, 0
+    # Essential-only, 3 Premium-only.
+    #
+    # The owner is on Essential, so only Essential counts. Matching "paramount
+    # plus" loosely would claim three titles that cannot actually be played —
+    # a false positive, which is the worse direction of error here: it sends
+    # you to the sofa for something that isn't there.
+    #
+    # This deliberately also excludes "Paramount+ Amazon Channel" and
+    # "Paramount+ Roku Premium Channel". They look like they should help, but
+    # they are tier-blind: the Amazon entry appears on 12/12 Essential titles
+    # *and* 3/3 Premium-only titles, so it says nothing about which tier a
+    # title needs. Counting them was tried on 2026-08-25 and reverted the same
+    # day for exactly that reason — see subscription_for().
+    #
+    # To move to Premium: add "paramount plus premium" to this tuple. Nothing
+    # else needs to change.
+    "Paramount+": ("paramount plus essential",),
     # Not yet subscribed to as of 2026-08-11 — added ahead of time so the day
     # a real subscription starts, the page reflects it with no code change.
     # TMDB's raw provider_name for each is confirmed live, not assumed:
@@ -489,16 +510,19 @@ def subscription_for(provider_name):
                                                     and, crucially, this is
                                                     not Apple TV+ either)
 
-    This replaced a blanket `"channel" in name` rejection on 2026-08-25, after
-    the owner noticed Strange Darling reading as not-streaming while sitting on
-    Paramount+. The old guard threw away every reseller row, including ones
-    whose content service *is* subscribed, so a title TMDB happened to list
-    only under a channel became invisible. Evidence for the change, measured
-    against the live table rather than assumed: of the 14 titles then carrying
-    a direct Paramount+ row, 14 also carried a channel row and 0 carried only a
-    direct row — the channel catalogs mirror the real one. The two titles
-    carrying only channel rows (Strange Darling, 10 Cloverfield Lane) were
-    TMDB data gaps, one of them confirmed by hand on the actual service.
+    This replaced a blanket `"channel" in name` rejection on 2026-08-25. It
+    still matters for the untiered services — "HBO Max Amazon Channel" and
+    "Apple TV Amazon Channel" are those catalogs and now resolve correctly —
+    but note what it does *not* buy: a reseller entry proves the content
+    service, never the *tier*. Paramount+ ships two tiers with different
+    catalogs, and its channel entries are tier-blind (the Amazon one appears on
+    every Essential title and every Premium-only title alike), so they are
+    excluded by the narrow "paramount plus essential" needle above rather than
+    by this function. Counting them was tried the same day, on the theory that
+    a channel-only listing was a TMDB data gap, and reverted once the tier
+    measurement showed the theory was untestable from this data: the two
+    channel-only titles turned out to be Premium, which the owner had said in
+    the first place.
 
     The "store" guard stays: "Apple TV Store" is a rent/buy storefront and
     would otherwise prefix-match the "apple tv" needle. It is global rather
