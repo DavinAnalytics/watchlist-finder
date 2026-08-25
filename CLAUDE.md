@@ -749,9 +749,18 @@ Mechanics worth not rediscovering:
   above *Schindler's List*, and 300 still admitted a 246-vote documentary.
   `MIN_VOTES = 1000` is where the list stops being novelty items, and still
   leaves 579 Netflix titles, 345 on Max, and 38 even on Apple TV+.
-- **Peacock uses only id 386 (Premium), not 387 (Premium Plus).** After the
-  Paramount+ Essential/Premium episode the default is to claim the narrower
-  catalog. Measured: it costs exactly one title out of 168.
+- **Peacock uses both 386 (Premium) and 387 (Premium Plus)** — the owner is on
+  Premium Plus, the *upper* tier. This is the mirror image of Paramount+,
+  where they are on the lower tier and the wider needle claimed titles they
+  cannot play. One rule produces both answers: **match the tier actually
+  subscribed to, and everything below it.** Narrower is not automatically
+  safer; it is only safer when the subscription is the lower tier. (Shipped
+  386-only for half an hour on the over-corrected reading, then fixed when the
+  owner said which tier they had. Adding 387 changed nothing visible — the one
+  extra title out of 169 isn't in the top 10 — but it will matter the day it
+  is.) On the main page no change was needed: `subscription_for()` prefix-
+  matches `"peacock"`, so Premium, Premium Plus, and the Premium Plus Amazon
+  Channel all already resolve to `Peacock`, which is correct on the top tier.
 - **One dialog per tmdb_id, not per section.** A title can top two services at
   once (*Interstellar* sits on both Hulu and Prime Video). Emitting a dialog
   per section would produce duplicate element ids — invalid HTML, and

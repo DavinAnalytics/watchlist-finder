@@ -543,10 +543,15 @@ SUBSCRIBED = {
 # Paramount+ is absent by request: the top-rated page skips it.
 #
 # Ad-supported tiers are folded in where they are the same subscription with
-# the same catalog (Netflix 1796). Peacock's second tier (387, Premium Plus) is
-# deliberately left out: it is a different tier, and after the Paramount+
-# Essential/Premium episode the default here is to claim the narrower catalog
-# rather than the wider one. Measured — it costs exactly one title out of 168.
+# the same catalog (Netflix 1796).
+#
+# Peacock lists both 386 (Premium) and 387 (Premium Plus). Both are included
+# because the owner is on Premium Plus, the *upper* tier — the opposite
+# situation to Paramount+, where they are on the lower tier and the wider
+# needle would have claimed titles they cannot play. The rule that produces
+# both answers is the same one: match the tier actually subscribed to, and
+# everything below it. Narrower is not automatically safer; it is only safer
+# when the subscription is the lower tier.
 #
 # Apple TV+ is id 350, the subscription. Id 2 is "Apple TV Store", the
 # unrelated rent/buy storefront, the same false friend guarded against in
@@ -555,7 +560,7 @@ PROVIDER_IDS = {
     "Netflix": (8, 1796),
     "Hulu": (15,),
     "Prime Video": (9,),
-    "Peacock": (386,),
+    "Peacock": (386, 387),
     "Max": (1899,),
     "Apple TV+": (350,),
 }
