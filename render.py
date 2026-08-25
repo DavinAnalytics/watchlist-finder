@@ -28,6 +28,9 @@ import unicodedata
 import urllib.parse
 
 import common
+# For TOP_N/MIN_VOTES only, so the page's own description of how it was built
+# can't drift from how it was actually built.
+import top_rated
 
 MIN_POLL_COVERAGE = 0.9  # below this share of the watchlist, say so on the page
 
@@ -137,6 +140,106 @@ def rentable_snapshot(conn, on):
     for row in rows:
         snap.setdefault(row["tmdb_id"], set()).add(row["provider"])
     return {k: sorted(v) for k, v in snap.items()}
+
+
+def top_rated_snapshot(conn):
+    """-> {service: [tmdb_id, ...]} in rank order, for the top-rated page.
+
+    Not date-scoped: top_rated.py replaces a service's rows wholesale each run,
+    so what is in the table is by definition current. A service whose discover
+    call failed keeps yesterday's rows rather than going blank — stale but
+    labelled beats empty, and the page's own timestamp says when it was built.
+    """
+    rows = conn.execute(
+        "SELECT service, tmdb_id FROM top_rated ORDER BY service, rank"
+    ).fetchall()
+    out = {}
+    for row in rows:
+        out.setdefault(row["service"], []).append(row["tmdb_id"])
+    return out
+
+
+def render_top_list(ids, movies, service):
+    """One service's ranked list. Meta leads with the score, not the services:
+    every row here is on the same one service, so a tag row would repeat the
+    section heading ten times and say nothing."""
+    if not ids:
+        return '<p class="empty">Nothing found for this service.</p>'
+    out = ["<ul>"]
+    for position, tmdb_id in enumerate(ids, 1):
+        movie = movies.get(tmdb_id)
+        title = movie["title"] if movie else f"tmdb:{tmdb_id}"
+        year = movie["year"] if movie else None
+        genres = (movie["genres"] if movie else "") or ""
+        vote = movie["vote_average"] if movie else None
+
+        bits = []
+        if vote:
+            bits.append(f'<span class="score-inline">★ {vote:.1f}</span>')
+        for extra in (year, genres or None):
+            if extra:
+                bits.append(esc(extra))
+        meta = f'<div class="card-meta">{" · ".join(bits)}</div>' if bits else ""
+
+        out.append(
+            f'<li><a class="row-card elev-sm" href="#m{tmdb_id}"'
+            f' data-initial="{esc(_initial(title))}">'
+            f'<div class="rank">{position}</div>'
+            f'{poster_html(movie["poster_path"] if movie else None)}'
+            f'<div class="row-info"><div class="card-title">{esc(title)}</div>'
+            f"{meta}</div></a></li>"
+        )
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def render_top_page(conn, movies, logger, styles_text, latest):
+    """Write docs/top-rated.html. -> the number of titles shown.
+
+    A separate page rather than another section on the main one: the main page
+    is a short, complete answer to "what can I watch tonight", and sixty
+    browse-the-catalogue rows would bury it. Both pages share styles.css.
+    """
+    top = top_rated_snapshot(conn)
+    if not top:
+        logger.warning("top_rated table is empty; skipping %s", common.TOP_OUTPUT_PATH.name)
+        return 0
+
+    # A title can top two services at once (Interstellar sits on both Hulu and
+    # Prime Video). One dialog per id, carrying every service it appears under,
+    # rather than one per section — duplicate element ids would be invalid HTML
+    # and :target would open whichever the browser found first.
+    dialog_items = {}
+    sections = []
+    for service in common.PROVIDER_IDS:
+        ids = top.get(service) or []
+        if not ids:
+            continue
+        sections.append(f"<h2>{esc(service)}</h2>\n{render_top_list(ids, movies, service)}")
+        for tmdb_id in ids:
+            dialog_items.setdefault(tmdb_id, []).append(service)
+
+    shown = sum(len(v) for v in top.values())
+    page = string.Template(common.TOP_TEMPLATE_PATH.read_text(encoding="utf-8")).substitute(
+        styles=string.Template(styles_text).safe_substitute(alpha_css=""),
+        generated=esc(
+            f"{dt.datetime.now().strftime('%a %-d %b, %H:%M')} · data from {latest}"
+        ),
+        intro=esc(
+            f"The {top_rated.TOP_N} highest-rated films on each service, by TMDB user "
+            f"score with at least {top_rated.MIN_VOTES:,} votes. Paramount+ is "
+            "excluded. Anything already on the watchlist or in favorites is left "
+            "out, so everything here is new."
+        ),
+        sections="\n\n".join(sections),
+        footer=esc(f"{shown} titles across {len(sections)} services"),
+        dialogs=render_dialogs(dialog_items, movies),
+    )
+    if "<script" in page.lower():
+        logger.error("refusing to write: rendered top-rated page contains a script tag")
+        return 0
+    common.atomic_write(common.TOP_OUTPUT_PATH, page)
+    return shown
 
 
 def owned_snapshot(conn):
@@ -929,6 +1032,7 @@ def main(argv=None):
 
     template_text = common.TEMPLATE_PATH.read_text(encoding="utf-8")
     template = string.Template(template_text)
+    styles_text = common.STYLES_PATH.read_text(encoding="utf-8")
 
     conn = common.connect()
     try:
@@ -1060,7 +1164,13 @@ def main(argv=None):
             filter_radios=render_filter_radios(stores) + "\n" + render_alpha_radios(initials),
             filter_bar=render_filter_bar(stores),
             alpha_bar=render_alpha_bar(initials),
-            alpha_css=render_alpha_css(initials) + "\n" + render_owned_css(stores),
+            # Two-pass: the generated rules live inside styles.css at the exact
+            # point in the cascade they always did, so the shared stylesheet has
+            # to be resolved before it becomes a value in the outer template —
+            # string.Template only substitutes once.
+            styles=string.Template(styles_text).safe_substitute(
+                alpha_css=render_alpha_css(initials) + "\n" + render_owned_css(stores)
+            ),
             count_streaming=len(streaming),
             count_new=len(new),
             count_gone=len(gone),
@@ -1092,6 +1202,12 @@ def main(argv=None):
             ),
             dialogs=render_dialogs(dialog_items, movies, rentable, similar, latest),
         )
+
+        # Written from inside the same connection, but as its own file: the two
+        # pages are independent, and a problem building one should not cost the
+        # other. An empty top_rated table (the stage failed, or has never run)
+        # logs and skips rather than writing a page full of empty sections.
+        top_shown = render_top_page(conn, movies, logger, styles_text, latest)
     finally:
         conn.close()
 
@@ -1105,9 +1221,9 @@ def main(argv=None):
     elapsed = (dt.datetime.now() - started).total_seconds()
     logger.info(
         "run complete in %.1fs: wrote %s — %d streaming, %d new, %d gone, "
-        "%d recommended, %d favorites streaming (%s vs %s)",
+        "%d recommended, %d favorites streaming, %d top-rated (%s vs %s)",
         elapsed, out_path, len(streaming), len(new), len(gone), len(recommended),
-        len(fav_streaming), latest, prev,
+        len(fav_streaming), top_shown, latest, prev,
     )
     return 0
 

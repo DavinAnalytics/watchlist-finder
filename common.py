@@ -68,7 +68,12 @@ RESOLVED_PATH = DATA_DIR / "resolved.json"
 UNRESOLVED_PATH = DATA_DIR / "unresolved.txt"
 DB_PATH = DATA_DIR / "movies.db"
 TEMPLATE_PATH = DIR / "template.html"
+TOP_TEMPLATE_PATH = DIR / "template_top.html"
+# Shared by both pages and inlined into each at render time, so neither needs
+# a second network request and neither can drift from the other.
+STYLES_PATH = DIR / "styles.css"
 OUTPUT_PATH = DOCS_DIR / "index.html"
+TOP_OUTPUT_PATH = DOCS_DIR / "top-rated.html"
 LOG_PATH = DIR / "watchlist.log"
 
 
@@ -320,6 +325,29 @@ class TMDB:
             append_to_response="credits,videos,release_dates,recommendations",
         )
 
+    def discover_top_rated(self, provider_ids, min_votes, page=1):
+        """Highest-rated flatrate titles on the given TMDB provider ids.
+
+        `vote_count.gte` is not optional garnish: sorting by vote_average with
+        no floor puts a concert film with 114 votes above Schindler's List.
+        Measured at 100/300/1000 when this shipped — 1000 is where the list
+        stops being novelty items and starts being films.
+
+        The dotted parameter name can't be a Python keyword argument, hence the
+        dict splat.
+        """
+        return self.get(
+            "/discover/movie",
+            watch_region="US",
+            with_watch_providers="|".join(str(int(p)) for p in provider_ids),
+            with_watch_monetization_types=KIND_FLATRATE,
+            sort_by="vote_average.desc",
+            include_adult="false",
+            language="en-US",
+            page=int(page),
+            **{"vote_count.gte": int(min_votes)},
+        )
+
     def watch_providers(self, tmdb_id):
         return self.get(f"/movie/{int(tmdb_id)}/watch/providers")
 
@@ -400,6 +428,20 @@ CREATE TABLE IF NOT EXISTS recommendations (
     source_id INTEGER NOT NULL REFERENCES movies(tmdb_id),
     picked_on DATE    NOT NULL,
     PRIMARY KEY (tmdb_id, picked_on)
+);
+
+-- The "Top rated on each service" page (2026-08-25). One row per service per
+-- title, replaced wholesale each run like `similar` and for the same reason:
+-- nothing reads a past state of this list, so keeping history would only let a
+-- title TMDB has since dropped keep appearing.
+--
+-- `service` is a common.SUBSCRIBED key, not a TMDB provider name — the tier
+-- and reseller mess is resolved before anything reaches this table.
+CREATE TABLE IF NOT EXISTS top_rated (
+    service TEXT    NOT NULL,
+    tmdb_id INTEGER NOT NULL REFERENCES movies(tmdb_id),
+    rank    INTEGER NOT NULL,
+    PRIMARY KEY (service, tmdb_id)
 );
 
 -- Films owned outright, per store (2026-08-18). Mirrors owned.txt and only
@@ -484,6 +526,7 @@ SUBSCRIBED = {
     # To move to Premium: add "paramount plus premium" to this tuple. Nothing
     # else needs to change.
     "Paramount+": ("paramount plus essential",),
+    # (continues below)
     # Not yet subscribed to as of 2026-08-11 — added ahead of time so the day
     # a real subscription starts, the page reflects it with no code change.
     # TMDB's raw provider_name for each is confirmed live, not assumed:
@@ -491,6 +534,30 @@ SUBSCRIBED = {
     # "Apple TV" (never "Apple TV+" — TMDB doesn't carry the "+").
     "Max": ("hbo max",),
     "Apple TV+": ("apple tv",),
+}
+
+# TMDB numeric provider ids, for /discover queries — which filter by id, not by
+# the provider_name strings SUBSCRIBED matches on. Confirmed live against
+# /watch/providers/movie?watch_region=US on 2026-08-25, not assumed.
+#
+# Paramount+ is absent by request: the top-rated page skips it.
+#
+# Ad-supported tiers are folded in where they are the same subscription with
+# the same catalog (Netflix 1796). Peacock's second tier (387, Premium Plus) is
+# deliberately left out: it is a different tier, and after the Paramount+
+# Essential/Premium episode the default here is to claim the narrower catalog
+# rather than the wider one. Measured — it costs exactly one title out of 168.
+#
+# Apple TV+ is id 350, the subscription. Id 2 is "Apple TV Store", the
+# unrelated rent/buy storefront, the same false friend guarded against in
+# subscription_for().
+PROVIDER_IDS = {
+    "Netflix": (8, 1796),
+    "Hulu": (15,),
+    "Prime Video": (9,),
+    "Peacock": (386,),
+    "Max": (1899,),
+    "Apple TV+": (350,),
 }
 
 

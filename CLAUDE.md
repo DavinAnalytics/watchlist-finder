@@ -44,14 +44,18 @@ watchlist/
 │   ├── unresolved.txt     # titles that need a human
 │   └── movies.db          # SQLite (gitignored, regenerable)
 ├── docs/
-│   └── index.html         # generated; served by GitHub Pages
+│   ├── index.html         # generated; served by GitHub Pages
+│   └── top-rated.html     # generated; top 10 per service
 ├── common.py              # paths, .env, TMDB client, schema, atomic write
 ├── resolver.py            # step 1: text -> tmdb ids
 ├── sync_providers.py      # step 2: availability
 ├── recommend.py           # step 2b: today's "because you liked" picks
-├── render.py              # step 3: the page
+├── top_rated.py           # step 2c: top 10 per streaming service
+├── render.py              # step 3: both pages
 ├── sync.py                # runs 1-3 in order, then commits and pushes
 ├── template.html
+├── template_top.html      # the top-rated page
+├── styles.css             # shared by both pages, inlined at render time
 ├── watchlist.log          # every run, timestamped (gitignored)
 └── .env                   # TMDB_API_KEY (gitignored)
 ```
@@ -714,6 +718,65 @@ duty — an owned film isn't streaming — but the tag says so on every row, and
 the alternative (a fourth count, or sections that disagree with their own
 counts) is worse on a phone.
 
+## The top-rated page
+
+**`docs/top-rated.html`**, added 2026-08-25 on request: the ten highest-rated
+films on each subscribed service, **excluding Paramount+** (owner's call) and
+excluding anything already on the watchlist or in favorites — the page exists
+to surface things not already written down, so a title with a home on the main
+page is a wasted slot.
+
+A **separate page**, not another section. The main page is a short, complete
+answer to "what can I watch tonight"; sixty browse-the-catalogue rows would
+bury it. The two link to each other and share `styles.css`.
+
+`top_rated.py` is pipeline step 2c and, like `recommend.py`, is a
+`required=False` stage in `sync.py` — a bonus page must never cost the main
+one. Its table is replaced *per service*, so a service whose discover call
+failed keeps yesterday's rows rather than going blank: stale-but-labelled
+beats empty, and the page stamps when it was built.
+
+Mechanics worth not rediscovering:
+
+- **`/discover/movie` filters by numeric provider id, not provider name.**
+  `common.PROVIDER_IDS` holds them, confirmed live against
+  `/watch/providers/movie?watch_region=US`, not assumed. Note id 350 is the
+  Apple TV+ subscription and id **2** is "Apple TV Store", the rent/buy
+  storefront — the same false friend `subscription_for()` guards against.
+- **`vote_count.gte` is load-bearing, not garnish.** Sorting by
+  `vote_average` with no floor is meaningless. Measured on Netflix when this
+  shipped: a floor of 100 put a 114-vote concert film and a comedy special
+  above *Schindler's List*, and 300 still admitted a 246-vote documentary.
+  `MIN_VOTES = 1000` is where the list stops being novelty items, and still
+  leaves 579 Netflix titles, 345 on Max, and 38 even on Apple TV+.
+- **Peacock uses only id 386 (Premium), not 387 (Premium Plus).** After the
+  Paramount+ Essential/Premium episode the default is to claim the narrower
+  catalog. Measured: it costs exactly one title out of 168.
+- **One dialog per tmdb_id, not per section.** A title can top two services at
+  once (*Interstellar* sits on both Hulu and Prime Video). Emitting a dialog
+  per section would produce duplicate element ids — invalid HTML, and
+  `:target` would open whichever the browser found first. The dialog carries
+  every service the title appears under.
+- **No `MIN_YEAR` floor**, deliberately, unlike `recommend.py`. That rule
+  exists because TMDB's *recommendations* skew to a film's era and kept
+  dredging up 70s/80s titles nobody asked for. This page is a factual "what is
+  rated highest here", and silently dropping *Grave of the Fireflies* would
+  make it wrong rather than tidier. If a floor is ever wanted, it should be a
+  visible choice.
+- Detail fetches go through `resolver.upsert_movie()`, so they are cached
+  forever and only a *new entrant* to a list costs a call. First run was 6
+  discover calls plus 60 detail fetches; steady state is 6 plus a handful.
+
+**`styles.css` is shared by both pages and inlined into each at render time.**
+Extracted from `template.html` when the second page landed — two copies of 300
+lines of CSS would have drifted within a week. It still contains the
+`$alpha_css` placeholder at its original point in the cascade, so it must be
+substituted *before* it is itself substituted into a template:
+`string.Template` only resolves one pass. The extraction was verified by
+re-rendering `index.html` and diffing byte-for-byte against the previous
+output — identical apart from the timestamp, a header comment, and one blank
+line. Do that again if the split is ever touched.
+
 **Filter by service**, added 2026-08-11: a pill row (`render.render_filter_bar()`)
 tapping "Netflix" and showing only Netflix titles across New/Watchlist
 streaming/Favorites streaming. Pure CSS — hidden radio inputs
@@ -880,6 +943,7 @@ fix for a non-problem while the real one stayed silent.
 1. ~~Resolver~~ — done. `resolver.py`.
 2. ~~Provider sync~~ — done. `sync_providers.py`.
 2b. ~~Recommendations~~ — done 2026-08-12. `recommend.py`.
+2c. ~~Top rated per service~~ — done 2026-08-25. `top_rated.py`.
 3. ~~Renderer~~ — done. `render.py`, plus `sync.py` to chain and publish.
 4. ~~launchd plist~~ — done. `install_launchd.py` generates and bootstraps it;
    `--uninstall` removes it.

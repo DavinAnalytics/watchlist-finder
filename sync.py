@@ -24,6 +24,7 @@ import recommend
 import render
 import resolver
 import sync_providers
+import top_rated
 
 # How long to wait for GitHub Pages to actually serve what was just pushed, and
 # how often to re-check. A Pages build normally lands in 30-90s.
@@ -37,7 +38,12 @@ VERIFY_NUDGE_TIMEOUT = 180
 # resolved.json carries every hand-pinned id, and CLAUDE.md makes GitHub the
 # backup. Without them the daily run leaves the repo permanently dirty and the
 # hand-fixes unbacked-up.
-COMMIT_PATHS = ["docs/index.html", "data/resolved.json", "data/unresolved.txt"]
+COMMIT_PATHS = [
+    "docs/index.html",
+    "docs/top-rated.html",
+    "data/resolved.json",
+    "data/unresolved.txt",
+]
 
 # (name, entry point, required). A required stage that fails stops the run:
 # every one of them is something the page would otherwise lie about.
@@ -56,6 +62,10 @@ STAGES = [
     ("resolver", resolver.main, True),
     ("providers", sync_providers.main, True),
     ("recommend", recommend.main, False),
+    # Same contract as recommend: a bonus page must never cost the main one.
+    # Its table is replaced per service, so a failed run leaves yesterday's
+    # top-rated lists in place and render.py still builds both pages.
+    ("top_rated", top_rated.main, False),
     ("render", render.main, True),
 ]
 
