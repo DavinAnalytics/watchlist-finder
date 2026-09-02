@@ -400,15 +400,36 @@ rule on the titles that already worked was never going to test it.
 request. TMDB lists it under the `ads`/`free` kinds, not `flatrate` — a
 different bucket that also contains Tubi, Pluto TV, The Roku Channel, Cineverse
 and others nobody asked for. `common.free_tier_for()` matches only YouTube's
-entry (`FREE_TIERS`, needle `"youtube free"`) and is checked separately from
-`subscription_for()`, never merged into `SUBSCRIBED` — the badge it produces
-reads "YouTube (free)" so it's never mistaken for a paid subscription. Two
-enforcement points, not one: `sync_providers.py` only stores an `ads`/`free`
-row if `free_tier_for()` recognizes it, and `render.py` re-checks on the way
-out, so a stray non-YouTube row can't reach the page even if one somehow
-reached the table. Every read of `availability` now goes through
-`subscription_for()` *or* `free_tier_for()` — update both when adding a rule
-that touches what counts as watchable.
+entry (`FREE_TIERS`, prefix needle `"youtube free"`) and is
+checked separately from `subscription_for()`, never merged into `SUBSCRIBED`
+— the badge it produces reads "YouTube (free)" so it's never mistaken for a
+paid subscription. Two TMDB identities, confirmed live: **"YouTube Free"
+(id 235)** is the dedicated catalog, and **bare "YouTube" (id 192)** is the
+same storefront when TMDB files a free listing under the rent/buy provider.
+The name needle stays `"youtube free"` — a bare `"youtube"` prefix would also
+catch YouTube TV / Premium / whatever TMDB adds next. Id 192 is recognized
+at store time and written as `YouTube Free`, so the render-time name check
+still fires. `YouTube TV` / `YouTube Premium` are also rejected by prefix;
+`channel` and `store` stay rejected the way they always were. Store-time
+also accepts those two provider ids, so a rename on TMDB's side still writes
+a row `render.py` can label. Two enforcement points, not one: `sync_providers.py`
+only stores an `ads`/`free` row if `free_tier_for()` (or those ids) recognizes
+it, and `render.py` re-checks on the way out, so a stray non-YouTube row
+can't reach the page even if one somehow reached the table. Every read of
+`availability` now goes through `subscription_for()` *or* `free_tier_for()`
+— update both when adding a rule that touches what counts as watchable.
+
+**TMDB's `/watch/providers` lags JustWatch**, and that gap is what hid
+*Prisoners* on 2026-09-02: JustWatch listed it on YouTube Free (package 235,
+ads) the same day, TMDB's copy still said rent/buy only, and the page
+followed TMDB. `sync_providers.py` now asks JustWatch after the TMDB fetch,
+matches on `externalIds.tmdbId` (never the first search hit — "Prisoners" is
+also a 2017 show), and adds the canonical `YouTube Free` ads row when TMDB
+missed it. JustWatch is enrichment, not a second catalog: five consecutive
+failures disable it for the rest of the run, TMDB rows still write, and it
+must never abort a provider sync. `recommend.py` does not pass a title in,
+so candidates skip this fill-in — a missed YouTube-only recommendation is
+an advert we didn't make, not a title on the page showing the wrong tag.
 
 **Rent/buy providers are stored too**, added 2026-08-11, but on a different
 rule than flatrate/ads: no filtering. TMDB's `rent`/`buy` kinds are already
