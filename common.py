@@ -633,6 +633,24 @@ STREAMING_KINDS = (KIND_FLATRATE, *FREE_KINDS)
 # 'ads'/'free' kinds, not 'flatrate'. Scoped to YouTube only, on request —
 # TMDB's ad-supported bucket also includes Tubi, Pluto TV, The Roku Channel,
 # Cineverse and others that were never asked for and would flood the page.
+#
+# Two TMDB identities, confirmed against /watch/providers/movie and live
+# title payloads: "YouTube Free" (id 235) is the dedicated free-with-ads
+# catalog, and bare "YouTube" (id 192) is the same storefront when TMDB
+# files a free listing under the rent/buy provider. The *name* needle
+# stays "youtube free" — a bare "youtube" prefix would also catch YouTube
+# TV / Premium / Music / whatever TMDB adds next. Id 192 is recognized
+# at store time by _free_ads_name() and written as YOUTUBE_FREE_PROVIDER,
+# so render.py's name check still fires. "YouTube TV" and "YouTube
+# Premium" are also rejected by prefix, belt and suspenders.
+#
+# The name stored in availability is TMDB's (or JustWatch's matching
+# "YouTube Free"); the badge on the page is the FREE_TIERS key.
+YOUTUBE_FREE_PROVIDER = "YouTube Free"
+# 235 is JustWatch/TMDB "YouTube Free". 192 is bare "YouTube", counted only
+# when it appears under ads/free — never as a rent/buy row.
+YOUTUBE_FREE_PACKAGE_ID = 235
+YOUTUBE_FREE_PROVIDER_IDS = (YOUTUBE_FREE_PACKAGE_ID, 192)
 FREE_TIERS = {
     "YouTube (free)": ("youtube free",),
 }
@@ -715,12 +733,20 @@ def free_tier_for(provider_name):
     Deliberately not folded into subscription_for(): the badge on the page
     shows whatever this returns verbatim, and "YouTube (free)" is the whole
     point — it must read differently from a service actually paid for.
+
+    Prefix match, same rule as subscription_for(): "YouTube Free" counts,
+    bare "YouTube" does not — that name is normalized to YOUTUBE_FREE_PROVIDER
+    at store time when the provider id is 192. Channel/store strings and the
+    paid YouTube TV / YouTube Premium prefixes are rejected even when they
+    would otherwise start with a needle.
     """
     name = (provider_name or "").strip().casefold()
-    if not name or "channel" in name:
+    if not name or "channel" in name or "store" in name:
+        return None
+    if name.startswith("youtube tv") or name.startswith("youtube premium"):
         return None
     for label, needles in FREE_TIERS.items():
-        if any(n in name for n in needles):
+        if any(name.startswith(n) for n in needles):
             return label
     return None
 
