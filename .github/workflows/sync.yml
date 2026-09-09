@@ -1,0 +1,101 @@
+# Daily watchlist rebuild. This is the scheduler — the Mac does not have to
+# be on. GitHub Actions is free on a public repo; Render's free cron is gone
+# and would be a second host next to Pages we already have.
+#
+# TMDB_API_KEY must be a repository secret (Settings → Secrets and variables
+# → Actions). The workflow fails loudly if it is missing rather than
+# publishing a page built from nothing.
+#
+# movies.db is gitignored (daily binary diff) but the new/gone history lives
+# in it, so each run restores the last copy from Actions cache and writes a
+# fresh one. A cache miss is a cold start: today's page is still correct,
+# yesterday's diff is empty, and the next run has history again.
+
+name: Daily sync
+
+on:
+  schedule:
+    # 04:00 PDT / 03:00 PST — same hour the launchd job used.
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - data/watchlist.txt
+      - data/favorites.txt
+      - data/owned.txt
+
+# A sync commit writes docs/*.html, not the text files above, so that push
+# does not re-trigger this workflow. No actor check needed.
+concurrency:
+  group: watchlist-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require TMDB_API_KEY
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          if [ -z "$TMDB_API_KEY" ]; then
+            echo "::error::TMDB_API_KEY repository secret is missing."
+            echo "Add it under Settings → Secrets and variables → Actions,"
+            echo "then re-run this workflow."
+            exit 1
+          fi
+
+      - name: Restore movies.db
+        uses: actions/cache/restore@v4
+        with:
+          path: data/movies.db
+          key: movies-db-${{ github.run_id }}
+          restore-keys: |
+            movies-db-
+
+      - name: Restore movies.db from last artifact
+        if: hashFiles('data/movies.db') == ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --workflow=sync.yml --status=success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run_id" ]; then
+            echo "no previous successful run; cold start"
+            exit 0
+          fi
+          gh run download "$run_id" -n movies-db -D data
+          ls -l data/movies.db
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python3 sync.py
+
+      - name: Save movies.db
+        if: always() && hashFiles('data/movies.db') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/movies.db
+          key: movies-db-${{ github.run_id }}
+
+      - name: Upload movies.db
+        if: always() && hashFiles('data/movies.db') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: movies-db
+          path: data/movies.db
+          retention-days: 90

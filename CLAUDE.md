@@ -1,18 +1,24 @@
 # Watchlist
 
-A personal movie watchlist dashboard. Runs locally on macOS once a day via
-launchd, pre-renders a static HTML page, pushes it to GitHub Pages, and gets
-read on a phone in bed.
+A personal movie watchlist dashboard. GitHub Actions runs `sync.py` once a
+day, pre-renders a static HTML page onto `main`, and GitHub Pages serves it
+to a phone in bed. The Mac does not have to be on.
 
 ## Hard constraints
 
 These are decisions, not preferences. Don't relitigate them in code.
 
 - **Free only.** No paid APIs, no paid tiers, no hosting bills. TMDB's free API
-  key covers everything needed.
-- **Local execution only.** All work happens on this Mac via launchd. GitHub is
-  a dumb file host — there is no GitHub Actions workflow and there never will
-  be. If the Mac is off, nothing runs. That's fine.
+  key covers everything needed. The daily runner is GitHub Actions on this
+  public repo (free). Not Render: their free cron is gone, and Pages already
+  hosts the output.
+- **Scheduled on GitHub Actions.** `.github/workflows/sync.yml` runs `sync.py`
+  at 11:00 UTC (04:00 PDT) and on every push that edits `data/watchlist.txt`,
+  `data/favorites.txt`, or `data/owned.txt`. `TMDB_API_KEY` is a repository
+  secret, never committed. Changed 2026-09-09: the original "local execution
+  only / no GitHub Actions / if the Mac is off, nothing runs" rule left the
+  page on a 2026-09-02 snapshot for a week. GitHub stays a dumb file host for
+  the HTML; Actions is only the scheduler that used to be launchd.
 - **Read-only output.** The page displays; it does not accept input. There is no
   "add to watchlist" button, no write-back path, no server. New titles are added
   by editing `data/watchlist.txt` directly.
@@ -53,15 +59,18 @@ watchlist/
 ├── top_rated.py           # step 2c: top 10 per streaming service
 ├── render.py              # step 3: both pages
 ├── sync.py                # runs 1-3 in order, then commits and pushes
+├── .github/workflows/sync.yml  # the daily scheduler (2026-09-09)
 ├── template.html
 ├── template_top.html      # the top-rated page
 ├── styles.css             # shared by both pages, inlined at render time
 ├── watchlist.log          # every run, timestamped (gitignored)
-└── .env                   # TMDB_API_KEY (gitignored)
+└── .env                   # TMDB_API_KEY locally (gitignored); Actions uses
+                           # the repository secret of the same name
 ```
 
 Stdlib only. No requirements.txt, nothing to install, nothing to keep current —
-a 4am job that depends on a virtualenv is a 4am job that breaks silently.
+a scheduled job that depends on a virtualenv is a scheduled job that breaks
+silently. `ubuntu-latest` already has `python3`.
 
 GitHub Pages serves from `/docs` on main.
 
@@ -923,7 +932,10 @@ data/movies.db
 ```
 
 The database is regenerable and would produce a binary diff daily. The text
-files and `resolved.json` are the real data and should be versioned.
+files and `resolved.json` are the real data and should be versioned. Actions
+persists `movies.db` across runs via `actions/cache` (and an artifact) so
+the new/gone history and poll_log survive; a cache miss is a cold start
+(today's page is still correct, yesterday's diff is empty).
 
 If the TMDB key ever lands in a commit, don't rewrite history — revoke it in the
 TMDB dashboard and issue a new one.
@@ -975,26 +987,45 @@ fix for a non-problem while the real one stayed silent.
 2b. ~~Recommendations~~ — done 2026-08-12. `recommend.py`.
 2c. ~~Top rated per service~~ — done 2026-08-25. `top_rated.py`.
 3. ~~Renderer~~ — done. `render.py`, plus `sync.py` to chain and publish.
-4. ~~launchd plist~~ — done. `install_launchd.py` generates and bootstraps it;
-   `--uninstall` removes it.
+4. ~~launchd plist~~ — done, then superseded. `install_launchd.py` still
+   generates it; `--uninstall` removes it.
+5. ~~GitHub Actions scheduler~~ — done 2026-09-09. `.github/workflows/sync.yml`.
 
 Built and live 2026-08-09: 67 titles resolved, 0 unresolved, publishing to
-GitHub Pages on a 04:00 schedule.
+GitHub Pages on a 04:00 schedule. Scheduler moved to Actions 2026-09-09
+after a week with the Mac off left the page on 2026-09-02.
+
+## GitHub Actions
+
+`.github/workflows/sync.yml` is the daily runner. Same `sync.py` as before:
+resolve → providers → recommend → top_rated → render → commit named files →
+`verify_published()`.
+
+`TMDB_API_KEY` is a repository secret. Without it the workflow exits 1 before
+touching the page, rather than publishing a blank one.
+
+`movies.db` stays gitignored. Each run restores the last cached copy, and
+saves a new one plus a 90-day artifact. The first run (or a cache miss) is a
+cold start: resolver re-fetches details, today's availability is written,
+new/gone is empty until the next day.
+
+Also fires when `data/watchlist.txt` / `favorites.txt` / `owned.txt` land on
+`main`, so a list edit does not wait until 04:00. The sync commit itself
+does not match those paths, so it cannot loop.
+
+Manual run: Actions → Daily sync → Run workflow.
 
 ## launchd
+
+Optional. The Mac job is no longer required. If it is still loaded, two
+schedulers will both commit `watchlist: sync` on the same morning —
+uninstall with `python3 install_launchd.py --uninstall`.
 
 `~/Library/LaunchAgents/com.<user>.watchlist.plist`, `StartCalendarInterval` at
 04:00, `RunAtLoad` false, `StandardErrorPath` set to a log file.
 
-launchd is used over cron deliberately: if the Mac is asleep at 04:00, cron
-skips the run silently, launchd queues it and fires on wake.
-
-Run `python3 install_launchd.py` to generate and bootstrap it. The generator
-derives every path at runtime (`sys.executable`, `Path(__file__)`, `getpass`),
-so no username is hardcoded in the repo even though the plist it writes contains
-absolute paths — the plist lives outside the repo and is not versioned.
-
-Verify a change with `launchctl kickstart -p gui/$(id -u)/com.<user>.watchlist`
-rather than waiting for 04:00. launchd runs with a minimal environment, so
-"works in my shell" proves nothing about whether `git` and its credentials
-resolve inside the job.
+Run `python3 install_launchd.py` only if you want a local fallback. The
+generator derives every path at runtime (`sys.executable`, `Path(__file__)`,
+`getpass`), so no username is hardcoded in the repo even though the plist it
+writes contains absolute paths — the plist lives outside the repo and is not
+versioned.
