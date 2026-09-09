@@ -4,6 +4,13 @@
 Chains the three scripts and then commits the result to GitHub Pages. The git
 push at the end is the only network write this project makes.
 
+The scheduled runner is GitHub Actions (`.github/workflows/sync.yml`), not
+the Mac. Same script locally (`python3 sync.py`) still works; launchd is
+optional. Two schedulers on the same day are harmless — availability is
+INSERT OR IGNORE, recommendations skip a full day — but they produce two
+commits, so uninstall launchd if Actions is running (`install_launchd.py
+--uninstall`).
+
 Each stage must succeed before the next one starts. A stale page that looks
 current is the failure this ordering exists to prevent: if the provider sync
 dies, the render never runs, docs/index.html keeps yesterday's content, and
@@ -121,9 +128,23 @@ def publish(logger, push=True):
     return True
 
 
+# Optional userinfo (https://x-access-token:…@github.com/…) so the Pages URL
+# still resolves inside GitHub Actions, whose origin is a token URL.
 REMOTE_RE = re.compile(
-    r"^(?:https://github\.com/|git@github\.com:)(?P<owner>[^/]+)/(?P<repo>.+?)(?:\.git)?$"
+    r"^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:)"
+    r"(?P<owner>[^/]+)/(?P<repo>.+?)(?:\.git)?$"
 )
+
+
+def pages_url_from_remote(remote):
+    """-> Pages URL for a git remote string, or None if it isn't github.com."""
+    m = REMOTE_RE.match((remote or "").strip())
+    if not m:
+        return None
+    owner, repo = m.group("owner"), m.group("repo")
+    if repo.casefold() == f"{owner.casefold()}.github.io":
+        return f"https://{owner.casefold()}.github.io/"
+    return f"https://{owner.casefold()}.github.io/{repo}/"
 
 
 def pages_url():
@@ -136,15 +157,7 @@ def pages_url():
     remote = git("remote", "get-url", "origin", check=False)
     if remote.returncode != 0:
         return None
-    m = REMOTE_RE.match(remote.stdout.strip())
-    if not m:
-        return None
-    owner, repo = m.group("owner"), m.group("repo")
-    # A repo literally named <owner>.github.io is served at the domain root,
-    # not under a path segment.
-    if repo.casefold() == f"{owner.casefold()}.github.io":
-        return f"https://{owner.casefold()}.github.io/"
-    return f"https://{owner.casefold()}.github.io/{repo}/"
+    return pages_url_from_remote(remote.stdout)
 
 
 STAMP_RE = re.compile(r'<p class="stamp">([^<]*)</p>')

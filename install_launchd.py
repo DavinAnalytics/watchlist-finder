@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Install (or remove) the 04:00 launchd job.
+"""Install (or remove) the optional 04:00 launchd job.
+
+The daily run is GitHub Actions (`.github/workflows/sync.yml`). This
+installer is leftover for a local-only setup. Two schedulers on the same
+day produce two sync commits; if Actions is the runner, uninstall this
+(`python3 install_launchd.py --uninstall`).
 
 Generates ~/Library/LaunchAgents/com.<user>.watchlist.plist and bootstraps it.
-
-launchd rather than cron, deliberately: if the Mac is asleep at 04:00 cron skips
-the run silently, launchd queues it and fires on wake.
 
 Every path is derived at runtime — the interpreter from sys.executable, the repo
 from this file's location, the user from getpass. Nothing here hardcodes a
